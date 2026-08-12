@@ -2,6 +2,8 @@
 
 **Smart Data Import** is an enterprise-grade, high-performance batch data import engine for Frappe and ERPNext. It is engineered to process large datasets (millions of records) across multiple Excel (`.xlsx`) or CSV files with automated dependency resolution, memory-efficient streaming, and advanced error handling.
 
+> 📘 **User Guide**: See [USAGE.md](USAGE.md) for step-by-step instructions, file preparation guides, and configuration tips.
+
 ---
 
 ## 🌟 Key Features
