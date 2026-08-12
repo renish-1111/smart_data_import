@@ -1,0 +1,11 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "smart_data_import"
+version = "0.0.1"
+description = "High-Performance Multi-File Data Import Engine with Automated DAG Dependency Sorting for ERPNext"
+dependencies = [
+    "openpyxl"
+]

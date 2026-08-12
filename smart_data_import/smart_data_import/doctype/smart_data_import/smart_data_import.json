@@ -1,0 +1,225 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "autoname": "format:SDI-{YYYY}-{MM}-{#####}",
+ "creation": "2026-08-13 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "status",
+  "section_files",
+  "files",
+  "section_progress",
+  "progress_percent",
+  "total_records",
+  "column_break_progress",
+  "imported_records",
+  "failed_records",
+  "error_file",
+  "section_dependency",
+  "dependencies",
+  "section_advanced",
+  "batch_size",
+  "import_type",
+  "ignore_link_errors",
+  "stop_on_error",
+  "ignore_duplicates",
+  "auto_detect_doctype",
+  "skip_empty_rows",
+  "clean_whitespace",
+  "column_break_advanced",
+  "filter_rules_json",
+  "execution_time_seconds",
+  "error_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Import Name / Description",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nAnalyzing\nReady\nProcessing\nCompleted\nFailed\nPartial Success"
+  },
+  {
+   "fieldname": "section_files",
+   "fieldtype": "Section Break",
+   "label": "📁 Upload Excel / CSV Data Files"
+  },
+  {
+   "fieldname": "files",
+   "fieldtype": "Table",
+   "label": "Data Files",
+   "options": "Smart Data Import File"
+  },
+  {
+   "fieldname": "section_progress",
+   "fieldtype": "Section Break",
+   "label": "📊 Import Progress & Status"
+  },
+  {
+   "default": "0",
+   "fieldname": "progress_percent",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Overall Progress"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_records",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Total Rows Detected"
+  },
+  {
+   "fieldname": "column_break_progress",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "imported_records",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Imported Successfully"
+  },
+  {
+   "default": "0",
+   "fieldname": "failed_records",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Failed Rows"
+  },
+  {
+   "fieldname": "error_file",
+   "fieldtype": "Attach",
+   "label": "Download Failed Rows Log (.xlsx)"
+  },
+  {
+   "collapsible": 1,
+   "collapsed": 1,
+   "fieldname": "section_dependency",
+   "fieldtype": "Section Break",
+   "label": "⚡ Auto-Resolved Execution Order & Dependencies"
+  },
+  {
+   "fieldname": "dependencies",
+   "fieldtype": "Table",
+   "label": "Calculated Tiers",
+   "options": "Smart Data Import Dependency"
+  },
+  {
+   "collapsible": 1,
+   "collapsed": 1,
+   "fieldname": "section_advanced",
+   "fieldtype": "Section Break",
+   "label": "⚙️ Advanced Settings (Optional)"
+  },
+  {
+   "default": "5000",
+   "fieldname": "batch_size",
+   "fieldtype": "Int",
+   "label": "Batch Chunk Size"
+  },
+  {
+   "default": "Insert New Records",
+   "fieldname": "import_type",
+   "fieldtype": "Select",
+   "label": "Import Mode",
+   "options": "Insert New Records\nUpdate Existing Records\nInsert and Update"
+  },
+  {
+   "default": "0",
+   "fieldname": "ignore_link_errors",
+   "fieldtype": "Check",
+   "label": "Ignore Missing Link Errors"
+  },
+  {
+   "default": "0",
+   "fieldname": "stop_on_error",
+   "fieldtype": "Check",
+   "label": "Stop Immediately On First Error"
+  },
+  {
+   "default": "0",
+   "fieldname": "ignore_duplicates",
+   "fieldtype": "Check",
+   "label": "Ignore Duplicates (Primary Key)"
+  },
+  {
+   "default": "1",
+   "fieldname": "auto_detect_doctype",
+   "fieldtype": "Check",
+   "label": "Auto-Detect DocType Schema"
+  },
+  {
+   "default": "1",
+   "fieldname": "skip_empty_rows",
+   "fieldtype": "Check",
+   "label": "Skip Blank Rows"
+  },
+  {
+   "default": "1",
+   "fieldname": "clean_whitespace",
+   "fieldtype": "Check",
+   "label": "Trim Whitespace"
+  },
+  {
+   "fieldname": "column_break_advanced",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "filter_rules_json",
+   "fieldtype": "Code",
+   "label": "Filter & Mapping Rules (JSON)",
+   "options": "JSON"
+  },
+  {
+   "default": "0",
+   "fieldname": "execution_time_seconds",
+   "fieldtype": "Float",
+   "label": "Execution Time (Seconds)"
+  },
+  {
+   "fieldname": "error_log",
+   "fieldtype": "Code",
+   "label": "Detailed Error Log"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Smart Data Import",
+ "name": "Smart Data Import",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title"
+}

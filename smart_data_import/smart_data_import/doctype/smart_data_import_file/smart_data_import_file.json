@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-13 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "file",
+  "doctype_name",
+  "sheet_name",
+  "column_break_1",
+  "total_rows",
+  "status",
+  "error_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "file",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "Data File (.xlsx, .csv)",
+   "reqd": 1
+  },
+  {
+   "fieldname": "doctype_name",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Target DocType",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "sheet_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sheet Name"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_rows",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Total Rows"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nAnalyzed\nImporting\nCompleted\nFailed"
+  },
+  {
+   "fieldname": "error_log",
+   "fieldtype": "Small Text",
+   "label": "Error Log"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Smart Data Import",
+ "name": "Smart Data Import File",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

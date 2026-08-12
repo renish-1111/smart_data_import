@@ -1,0 +1,92 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-13 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "execution_tier",
+  "doctype_name",
+  "depends_on_doctypes",
+  "column_break_1",
+  "has_inner_dependency",
+  "self_reference_field",
+  "status",
+  "processed_count",
+  "total_count"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "execution_tier",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Execution Tier"
+  },
+  {
+   "fieldname": "doctype_name",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "DocType",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "depends_on_doctypes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Depends On DocTypes"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "has_inner_dependency",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Has Inner (Self) Dependency"
+  },
+  {
+   "fieldname": "self_reference_field",
+   "fieldtype": "Data",
+   "label": "Self Reference Field"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nProcessing\nCompleted\nFailed"
+  },
+  {
+   "default": "0",
+   "fieldname": "processed_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Processed Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Total Count"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Smart Data Import",
+ "name": "Smart Data Import Dependency",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "execution_tier",
+ "sort_order": "ASC",
+ "states": []
+}
