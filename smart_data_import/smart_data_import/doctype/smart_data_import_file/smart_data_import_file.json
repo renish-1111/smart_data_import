@@ -12,6 +12,7 @@
   "column_break_1",
   "total_rows",
   "status",
+  "mapping_summary",
   "error_log"
  ],
  "fields": [
@@ -23,6 +24,7 @@
    "reqd": 1
   },
   {
+   "description": "Leave empty to auto-detect.",
    "fieldname": "doctype_name",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -30,6 +32,7 @@
    "options": "DocType"
   },
   {
+   "description": "Excel only. Empty = first sheet.",
    "fieldname": "sheet_name",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -44,7 +47,8 @@
    "fieldname": "total_rows",
    "fieldtype": "Int",
    "in_list_view": 1,
-   "label": "Total Rows"
+   "label": "Total Rows",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -52,18 +56,29 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Pending\nAnalyzed\nImporting\nCompleted\nFailed"
+   "options": "Pending\nAnalyzed\nImporting\nCompleted\nFailed",
+   "read_only": 1
+  },
+  {
+   "columns": 3,
+   "description": "How many columns were matched, which ones are ignored and which mandatory fields are missing.",
+   "fieldname": "mapping_summary",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Mapping & Warnings",
+   "read_only": 1
   },
   {
    "fieldname": "error_log",
    "fieldtype": "Small Text",
-   "label": "Error Log"
+   "label": "Result / Error Log",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-08-13 00:00:00.000000",
+ "modified": "2026-08-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Smart Data Import",
  "name": "Smart Data Import File",
