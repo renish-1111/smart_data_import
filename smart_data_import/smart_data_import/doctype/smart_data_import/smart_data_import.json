@@ -10,7 +10,9 @@
  "field_order": [
   "title",
   "status",
+  "import_type",
   "section_files",
+  "expand_multi_sheet_files",
   "files",
   "section_progress",
   "progress_percent",
@@ -28,7 +30,6 @@
   "dependencies",
   "section_advanced",
   "batch_size",
-  "import_type",
   "ignore_link_errors",
   "ignore_mandatory_errors",
   "stop_on_error",
@@ -56,13 +57,13 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nAnalyzing\nReady\nProcessing\nCompleted\nFailed\nPartial Success\nRolling Back\nRolled Back",
+   "options": "Pending\nAnalyzing\nReady\nProcessing\nCompleted\nFailed\nPartial Success\nRolling Back\nRolled Back\nCancelled",
    "read_only": 1
   },
   {
    "fieldname": "section_files",
    "fieldtype": "Section Break",
-   "label": "\ud83d\udcc1 Upload Excel / CSV Data Files"
+   "label": "Upload Excel / CSV Data Files"
   },
   {
    "description": "Attach one .xlsx or .csv file per DocType. Row 1 must hold the column headers. Leave 'Target DocType' empty to let it be detected automatically. Tip: use <b>Download Template</b> in the toolbar to get a ready-to-fill file.",
@@ -74,7 +75,7 @@
   {
    "fieldname": "section_progress",
    "fieldtype": "Section Break",
-   "label": "\ud83d\udcca Import Progress & Status"
+   "label": "Import Progress & Status"
   },
   {
    "default": "0",
@@ -146,7 +147,7 @@
    "depends_on": "eval:(doc.errors && doc.errors.length)",
    "fieldname": "section_errors",
    "fieldtype": "Section Break",
-   "label": "\u2757 Failed & Skipped Rows"
+   "label": "Failed & Skipped Rows"
   },
   {
    "description": "The exact reason for each problem row. Use <b>View Errors</b> in the toolbar for a grouped summary, or download the Import Log for the complete list.",
@@ -161,7 +162,7 @@
    "collapsed": 1,
    "fieldname": "section_dependency",
    "fieldtype": "Section Break",
-   "label": "\u26a1 Auto-Resolved Execution Order & Dependencies"
+   "label": "Auto-Resolved Execution Order & Dependencies"
   },
   {
    "description": "Calculated automatically: tier 0 is imported first, then tier 1, and so on.",
@@ -176,7 +177,7 @@
    "collapsed": 1,
    "fieldname": "section_advanced",
    "fieldtype": "Section Break",
-   "label": "\u2699\ufe0f Advanced Settings (Optional)"
+   "label": "Advanced Settings"
   },
   {
    "default": "5000",
@@ -227,6 +228,13 @@
    "fieldname": "auto_detect_doctype",
    "fieldtype": "Check",
    "label": "Auto-Detect DocType Schema"
+  },
+  {
+   "default": "1",
+   "description": "When an uploaded Excel file has more than one sheet, automatically add one row per extra sheet so every sheet gets imported. Turn off if you want to import only the sheet(s) you list yourself under Data Files.",
+   "fieldname": "expand_multi_sheet_files",
+   "fieldtype": "Check",
+   "label": "Auto-Add Rows For Extra Sheets"
   },
   {
    "default": "1",
@@ -285,6 +293,14 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "All",
    "write": 1
   }
  ],

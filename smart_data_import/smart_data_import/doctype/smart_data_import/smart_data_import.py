@@ -89,8 +89,8 @@ class SmartDataImport(Document):
 		return reset_import(self.name)
 
 	@frappe.whitelist()
-	def get_template(self, target_doctype, include_optional=1):
-		return download_import_template(target_doctype, include_optional)
+	def get_template(self, target_doctype, include_optional=1, mode="single"):
+		return download_import_template(target_doctype, include_optional, mode)
 
 	@frappe.whitelist()
 	def error_summary(self, limit=25):

@@ -1,7 +1,7 @@
 // Copyright (c) 2026, ERPNext AI Team and contributors
 // For license information, please see license.txt
 
-const TERMINAL_STATUSES = ["Completed", "Failed", "Partial Success", "Rolled Back"];
+const TERMINAL_STATUSES = ["Completed", "Failed", "Partial Success", "Rolled Back", "Cancelled"];
 const BUSY_STATUSES = ["Processing", "Rolling Back"];
 
 frappe.ui.form.on("Smart Data Import", {
@@ -9,6 +9,7 @@ frappe.ui.form.on("Smart Data Import", {
 		frm.events.bind_realtime(frm);
 		frm.events.setup_buttons(frm);
 		frm.events.render_headline(frm);
+		frm.events.render_indicators(frm);
 
 		// Analyze once per document, silently, when files were added but never analyzed.
 		// The flag is essential: a file that yields no rows keeps the status at
@@ -45,13 +46,19 @@ frappe.ui.form.on("Smart Data Import", {
 
 		if (!running && !finished) {
 			// Custom button (not set_primary_action) so the standard Save action keeps working.
-			frm.add_custom_button(__("🚀 Start Import"), () => frm.events.start_import(frm)).addClass(
+			frm.add_custom_button(__("Start Import"), () => frm.events.start_import(frm)).addClass(
 				"btn-primary"
 			);
 		}
 
+		if (frm.doc.status === "Processing") {
+			frm.add_custom_button(__("Cancel Import"), () => frm.events.cancel_import(frm)).addClass(
+				"btn-danger"
+			);
+		}
+
 		if ((frm.doc.errors || []).length) {
-			frm.add_custom_button(__("❗ View Errors"), () => frm.events.show_errors(frm)).addClass(
+			frm.add_custom_button(__("View Errors"), () => frm.events.show_errors(frm)).addClass(
 				"btn-warning"
 			);
 		}
@@ -67,7 +74,7 @@ frappe.ui.form.on("Smart Data Import", {
 
 		// Undo is offered whenever a manifest of created records still exists.
 		if (!running && frm.doc.rollback_file) {
-			frm.add_custom_button(__("⏪ Rollback Import"), () => frm.events.rollback_import(frm)).addClass(
+			frm.add_custom_button(__("Rollback Import"), () => frm.events.rollback_import(frm)).addClass(
 				"btn-danger"
 			);
 		}
@@ -97,17 +104,17 @@ frappe.ui.form.on("Smart Data Import", {
 
 		if (frm.doc.status === "Processing") {
 			frm.dashboard.set_headline_alert(
-				__("⏳ Importing in the background — you can close this page, progress is saved."),
+				__("Importing in the background — you can close this page, progress is saved."),
 				"blue"
 			);
 		} else if (frm.doc.status === "Rolling Back") {
 			frm.dashboard.set_headline_alert(
-				__("⏪ Rolling back — deleting the records this import created..."),
+				__("Rolling back — deleting the records this import created..."),
 				"orange"
 			);
 		} else if (frm.doc.status === "Rolled Back") {
 			frm.dashboard.set_headline_alert(
-				__("⏪ Rolled back: {0} records deleted.{1}", [
+				__("Rolled back: {0} records deleted.{1}", [
 					frm.doc.rolled_back_records || 0,
 					frm.doc.rollback_file
 						? __(" Some records could not be deleted — see the Detailed Error Log.")
@@ -115,9 +122,16 @@ frappe.ui.form.on("Smart Data Import", {
 				]),
 				frm.doc.rollback_file ? "orange" : "green"
 			);
+		} else if (frm.doc.status === "Cancelled") {
+			frm.dashboard.set_headline_alert(
+				__("Cancelled: {0} records were imported before it was stopped.", [
+					frm.doc.imported_records || 0,
+				]),
+				"orange"
+			);
 		} else if (frm.doc.status === "Completed") {
 			frm.dashboard.set_headline_alert(
-				__("🎉 Done: {0} records imported in {1}s ({2} skipped).", [
+				__("Done: {0} records imported in {1}s ({2} skipped).", [
 					frm.doc.imported_records || 0,
 					frm.doc.execution_time_seconds || 0,
 					frm.doc.skipped_records || 0,
@@ -126,7 +140,7 @@ frappe.ui.form.on("Smart Data Import", {
 			);
 		} else if (frm.doc.status === "Partial Success") {
 			frm.dashboard.set_headline_alert(
-				__("⚠️ {0} imported, {1} failed, {2} skipped. {3}", [
+				__("{0} imported, {1} failed, {2} skipped. {3}", [
 					frm.doc.imported_records || 0,
 					frm.doc.failed_records || 0,
 					frm.doc.skipped_records || 0,
@@ -137,7 +151,7 @@ frappe.ui.form.on("Smart Data Import", {
 			bind_error_link(frm);
 		} else if (frm.doc.status === "Failed") {
 			frm.dashboard.set_headline_alert(
-				__("❌ Import failed. {0}, fix the cause, then Reset for New Run.", [
+				__("Import failed. {0}, fix the cause, then Reset for New Run.", [
 					error_link(__("See what went wrong")),
 				]),
 				"red"
@@ -145,7 +159,7 @@ frappe.ui.form.on("Smart Data Import", {
 			bind_error_link(frm);
 		} else if (problems.length) {
 			frm.dashboard.set_headline_alert(
-				__("❌ {0} file(s) cannot be imported yet — see the Result / Error Log column.", [
+				__("{0} file(s) cannot be imported yet — see the Result / Error Log column.", [
 					problems.length,
 				]),
 				"red"
@@ -154,14 +168,34 @@ frappe.ui.form.on("Smart Data Import", {
 			const flow = [...frm.doc.dependencies]
 				.sort((a, b) => a.execution_tier - b.execution_tier)
 				.map((d) => `${d.doctype_name} (${d.total_count})`)
-				.join(" ➔ ");
+				.join(" → ");
 			const suffix = warnings.length
 				? __(" — {0} file(s) have mapping warnings, use Preview first.", [warnings.length])
 				: __(" — ready to import.");
 			frm.dashboard.set_headline_alert(
-				__("✨ {0} rows in this order: <b>{1}</b>{2}", [frm.doc.total_records || 0, flow, suffix]),
+				__("{0} rows in this order: <b>{1}</b>{2}", [frm.doc.total_records || 0, flow, suffix]),
 				warnings.length ? "orange" : "green"
 			);
+		}
+	},
+
+	// ------------------------------------------------------------------ indicators
+
+	render_indicators(frm) {
+		if (frm.is_new()) {
+			return;
+		}
+		if (frm.doc.imported_records) {
+			frm.dashboard.add_indicator(__("{0} imported", [frm.doc.imported_records]), "green");
+		}
+		if (frm.doc.failed_records) {
+			frm.dashboard.add_indicator(__("{0} failed", [frm.doc.failed_records]), "red");
+		}
+		if (frm.doc.skipped_records) {
+			frm.dashboard.add_indicator(__("{0} skipped", [frm.doc.skipped_records]), "orange");
+		}
+		if (frm.doc.rolled_back_records) {
+			frm.dashboard.add_indicator(__("{0} rolled back", [frm.doc.rolled_back_records]), "purple");
 		}
 	},
 
@@ -187,11 +221,13 @@ frappe.ui.form.on("Smart Data Import", {
 			frm.doc.progress_percent = data.progress;
 			frm.refresh_fields();
 
-			frm.dashboard.show_progress(
-				data.status === "Rolling Back" ? __("Rollback Progress") : __("Import Progress"),
-				data.progress || 0,
-				data.message || __("Working...")
-			);
+			const progress_title =
+				data.status === "Rolling Back"
+					? __("Rollback Progress")
+					: data.status === "Analyzing"
+					  ? __("Analyze Progress")
+					  : __("Import Progress");
+			frm.dashboard.show_progress(progress_title, data.progress || 0, data.message || __("Working..."));
 
 			if (TERMINAL_STATUSES.includes(data.status)) {
 				frm.dashboard.hide_progress();
@@ -217,15 +253,17 @@ frappe.ui.form.on("Smart Data Import", {
 			return;
 		}
 		frm.__analyzing = true;
+		// A live progress bar (fed by the "smart_import_progress" realtime event) reads
+		// better here than a blocking freeze overlay, which would just hide it.
+		frm.dashboard.show_progress(__("Analyze Progress"), 0, __("Reading your files..."));
 
 		frm.call({
 			method: "analyze_dependencies",
 			doc: frm.doc,
-			freeze: !silent,
-			freeze_message: __("Reading your files..."),
 		})
 			.then(() => frm.reload_doc())
 			.always(() => {
+				frm.dashboard.hide_progress();
 				frm.__analyzing = false;
 			});
 	},
@@ -397,6 +435,23 @@ frappe.ui.form.on("Smart Data Import", {
 		});
 	},
 
+	cancel_import(frm) {
+		frappe.confirm(
+			__("Stop this import? Records already imported so far are kept — this cannot be undone by itself, but you can Rollback afterward if needed."),
+			() => {
+				frm.call({ method: "cancel_import", doc: frm.doc, freeze: true }).then((r) => {
+					const result = r.message || {};
+					if (result.status === "error") {
+						frappe.msgprint(result.message);
+						return;
+					}
+					frappe.show_alert({ message: result.message, indicator: "orange" });
+					frm.reload_doc();
+				});
+			}
+		);
+	},
+
 	reset_import(frm) {
 		frappe.confirm(
 			__("Clear all counters and logs so this import can run again? Imported records are not deleted."),
@@ -409,18 +464,22 @@ frappe.ui.form.on("Smart Data Import", {
 	},
 
 	download_template(frm) {
-		const preset = (frm.doc.files || []).map((r) => r.doctype_name).filter(Boolean);
+		const preset = [...new Set((frm.doc.files || []).map((r) => r.doctype_name).filter(Boolean))];
+		const SEPARATE_LABEL = __("Separate files (.zip)");
+		const COMBINED_LABEL = __("Combined into one file (one sheet each)");
+
 		const dialog = new frappe.ui.Dialog({
 			title: __("Download Import Template"),
 			fields: [
 				{
-					fieldname: "target_doctype",
-					fieldtype: "Link",
-					options: "DocType",
-					label: __("DocType"),
+					fieldname: "target_doctypes",
+					fieldtype: "MultiSelectList",
+					label: __("DocType(s)"),
 					reqd: 1,
-					default: preset[0] || "",
-					get_query: () => ({ filters: { istable: 0, issingle: 0 } }),
+					default: preset,
+					get_data: function (txt) {
+						return frappe.db.get_link_options("DocType", txt, { istable: 0, issingle: 0 });
+					},
 				},
 				{
 					fieldname: "include_optional",
@@ -431,25 +490,44 @@ frappe.ui.form.on("Smart Data Import", {
 						"Unchecked gives you only the mandatory columns — the fastest way to a valid file."
 					),
 				},
+				{
+					fieldname: "package_mode",
+					fieldtype: "Select",
+					label: __("When more than one DocType is selected"),
+					options: [COMBINED_LABEL, SEPARATE_LABEL].join("\n"),
+					default: COMBINED_LABEL,
+					description: __(
+						"Combined puts one sheet per DocType in a single workbook. Separate gives you one standalone .xlsx per DocType, zipped together."
+					),
+				},
 			],
 			primary_action_label: __("Generate"),
 			primary_action(values) {
+				const doctypes = values.target_doctypes || [];
+				if (!doctypes.length) {
+					frappe.msgprint(__("Select at least one DocType."));
+					return;
+				}
 				frm.call({
 					method: "get_template",
 					doc: frm.doc,
-					args: values,
+					args: {
+						target_doctype: doctypes,
+						include_optional: values.include_optional,
+						mode: values.package_mode === SEPARATE_LABEL ? "separate" : "single",
+					},
 					freeze: true,
-					freeze_message: __("Building template..."),
+					freeze_message: __("Building template(s)..."),
 				}).then((r) => {
 					dialog.hide();
 					const info = r.message;
 					if (!info) return;
 					window.open(info.file_url);
+					const summary = (info.stats || [])
+						.map((s) => `${s.doctype} (${s.total_columns}, ${s.mandatory_columns} required)`)
+						.join(", ");
 					frappe.show_alert({
-						message: __("Template with {0} columns ({1} mandatory) downloaded.", [
-							info.total_columns,
-							info.mandatory_columns,
-						]),
+						message: summary ? __("Downloaded: {0}", [summary]) : __("Template downloaded."),
 						indicator: "green",
 					});
 				});
@@ -615,25 +693,38 @@ function render_preview(data) {
 			)}: <b>${f.unmapped.map(esc).join(", ")}</b></div>`;
 		}
 
+		const mandatory_set = new Set(f.mandatory_fieldnames || []);
+		const mandatory_style = 'style="color:#c0392b;font-weight:600;"';
+
 		const mapped_pairs = Object.entries(f.mapped || {});
 		html += `<table class="table table-bordered table-sm" style="font-size:12px;">
 			<thead><tr>
 				<th>${__("Column in file")}</th><th>${__("Imported into field")}</th>
 			</tr></thead><tbody>`;
 		mapped_pairs.forEach(([header, fieldname]) => {
-			html += `<tr><td>${esc(header)}</td><td><code>${esc(fieldname)}</code></td></tr>`;
+			const is_mandatory = mandatory_set.has(fieldname);
+			html += `<tr><td>${esc(header)}</td><td><code${is_mandatory ? ` ${mandatory_style}` : ""}>${esc(
+				fieldname
+			)}${is_mandatory ? " *" : ""}</code></td></tr>`;
 		});
 		(f.unmapped || []).forEach((header) => {
 			html += `<tr class="text-muted"><td>${esc(header)}</td><td>— ${__("ignored")}</td></tr>`;
 		});
 		html += `</tbody></table>`;
+		if (mandatory_set.size) {
+			html += `<div class="text-muted small mb-2"><span ${mandatory_style}>*</span> ${__(
+				"Mandatory field on the target DocType."
+			)}</div>`;
+		}
 
 		if ((f.samples || []).length) {
 			html += `<div class="text-muted small mb-1">${__("First rows as they will be read")}:</div>
 				<div style="overflow-x:auto;"><table class="table table-bordered table-sm" style="font-size:11px;"><thead><tr>`;
 			(f.headers || []).forEach((h, i) => {
 				const target = (f.mapped || {})[String(h).trim()];
-				html += `<th${target ? "" : ' class="text-muted"'}>${esc(h || `col ${i + 1}`)}</th>`;
+				const is_mandatory = target && mandatory_set.has(target);
+				const th_style = is_mandatory ? ` ${mandatory_style}` : !target ? ' class="text-muted"' : "";
+				html += `<th${th_style}>${esc(h || `col ${i + 1}`)}</th>`;
 			});
 			html += `</tr></thead><tbody>`;
 			f.samples.forEach((row) => {

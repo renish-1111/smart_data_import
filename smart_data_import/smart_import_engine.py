@@ -21,6 +21,39 @@ EXCEL_EXTENSIONS = (".xlsx", ".xlsm", ".xltx", ".xltm")
 CSV_EXTENSIONS = (".csv",)
 SUPPORTED_EXTENSIONS = EXCEL_EXTENSIONS + CSV_EXTENSIONS
 
+
+class ImportCancelled(Exception):
+	"""Raised internally when a user-requested cancellation is detected between
+	batches. Caught inside execute_import — never a real failure."""
+
+
+# The engine writes with ignore_permissions=True, so it is the only thing standing
+# between a caller and any DocType in the system. System Managers use this
+# intentionally for trusted bulk loads. Anyone else (e.g. the self-service import
+# portal) is additionally checked against their real create/write permission on the
+# target DocType in _assert_target_doctypes_allowed — but these stay blocked even if
+# a role was ever accidentally granted permission on them.
+SECURITY_CRITICAL_DOCTYPES = {
+	"User",
+	"Role",
+	"Role Profile",
+	"Has Role",
+	"DocType",
+	"DocField",
+	"DocPerm",
+	"Custom DocPerm",
+	"Custom Field",
+	"Property Setter",
+	"Module Def",
+	"System Settings",
+	"Server Script",
+	"Client Script",
+	"Webhook",
+	"OAuth Client",
+	"Integration Request",
+	"Smart Data Import",
+}
+
 # Layout-only fieldtypes never hold data and must not take part in column mapping.
 # How many problem rows are kept on the document for the UI. The full list always
 # lives in the attached Excel log.
@@ -139,6 +172,12 @@ def missing_mandatory_fields(meta, mapped_fieldnames, defaults=None):
 	return missing
 
 
+def mandatory_fieldnames(meta):
+	"""Fieldnames that are mandatory on this DocType, for highlighting them in the
+	column mapping preview regardless of whether the file actually supplies them."""
+	return {f.fieldname for f in meta.fields if f.reqd and f.fieldtype not in LAYOUT_FIELDTYPES}
+
+
 def sniff_csv_dialect(file_path):
 	"""Detects the delimiter so semicolon/tab separated exports work out of the box."""
 	try:
@@ -173,6 +212,7 @@ class SmartImportEngine:
 		self.rules = self._parse_filter_rules()
 		self._dt_index = None
 		self._manifest_buffer = []
+		self._link_resolve_cache = {}
 
 	# -------------------------------------------------------------------------
 	# 0. CONFIGURATION HELPERS
@@ -240,11 +280,24 @@ class SmartImportEngine:
 		self.doc.save(ignore_permissions=True)
 		frappe.db.commit()
 
-		detected_doctypes = set()
+		if getattr(self.doc, "expand_multi_sheet_files", 1):
+			self._expand_multi_sheet_files()
 
+		file_sheet_counts = defaultdict(int)
 		for row in self.doc.files:
+			if row.file:
+				file_sheet_counts[row.file] += 1
+
+		detected_doctypes = set()
+		total_files = len(self.doc.files) or 1
+
+		for file_idx, row in enumerate(self.doc.files, start=1):
 			row.mapping_summary = ""
 			row.error_log = ""
+			self.publish_progress(
+				_("Analyzing file {0} of {1}...").format(file_idx, total_files),
+				flt((file_idx - 1) / total_files * 100, 1),
+			)
 
 			file_path, error = resolve_file_path(row.file)
 			if error:
@@ -267,7 +320,10 @@ class SmartImportEngine:
 
 			# Auto-detection only fills blanks; a manually chosen DocType is never overwritten.
 			if not row.doctype_name and self.doc.auto_detect_doctype:
-				detected, note = self.detect_target_doctype(row.file, row.sheet_name, headers)
+				is_multi_sheet = file_sheet_counts.get(row.file, 0) > 1
+				detected, note = self.detect_target_doctype(
+					row.file, row.sheet_name, headers, is_multi_sheet=is_multi_sheet
+				)
 				if detected:
 					row.doctype_name = detected
 					row.mapping_summary = note
@@ -293,6 +349,8 @@ class SmartImportEngine:
 				continue
 
 			row.mapping_summary = self._describe_mapping(row.doctype_name, headers, row.mapping_summary)
+
+		self.publish_progress(_("Building dependency graph..."), 100)
 
 		# Build dependency graph & topological tiers
 		self.doc.dependencies = []
@@ -322,6 +380,59 @@ class SmartImportEngine:
 		self.doc.save(ignore_permissions=True)
 		frappe.db.commit()
 		return True
+
+	def _expand_multi_sheet_files(self):
+		"""Auto-adds one Files row per extra sheet in an uploaded workbook.
+
+		A user attaching a single .xlsx that has several sheets (e.g. one per
+		DocType) only ever got the first sheet imported, since one row maps to
+		one sheet. This mirrors that automatically so every page of the
+		workbook ends up as its own row, each analyzed and auto-detected
+		independently. Idempotent: re-analyzing never creates duplicate rows
+		for a sheet that already has one, and the "Field Guide" tab this same
+		app writes into its own downloadable templates is always skipped.
+		"""
+		existing_by_file = defaultdict(set)
+		for row in self.doc.files:
+			existing_by_file[row.file].add(row.sheet_name or "")
+
+		new_rows = []
+		for row in list(self.doc.files):
+			if not row.file:
+				continue
+
+			file_path, error = resolve_file_path(row.file)
+			if error or not file_path.lower().endswith(EXCEL_EXTENSIONS):
+				continue
+
+			try:
+				wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+				sheet_names = list(wb.sheetnames)
+				wb.close()
+			except Exception:
+				continue
+
+			if len(sheet_names) <= 1:
+				continue
+
+			if not row.sheet_name:
+				row.sheet_name = sheet_names[0]
+				existing_by_file[row.file].add(row.sheet_name)
+
+			for extra_sheet in sheet_names:
+				if extra_sheet == "Field Guide" or extra_sheet in existing_by_file[row.file]:
+					continue
+				try:
+					_headers, count, _sn = self.read_file_header_and_count(file_path, extra_sheet)
+				except Exception:
+					continue
+				if not count:
+					continue
+				existing_by_file[row.file].add(extra_sheet)
+				new_rows.append({"file": row.file, "sheet_name": extra_sheet})
+
+		for new_row in new_rows:
+			self.doc.append("files", new_row)
 
 	def _describe_mapping(self, target_doctype, headers, prefix=""):
 		"""Builds the short human readable mapping report shown on each file row."""
@@ -411,10 +522,17 @@ class SmartImportEngine:
 		self._dt_index = index
 		return index
 
-	def detect_target_doctype(self, filename, sheet_name, headers):
+	def detect_target_doctype(self, filename, sheet_name, headers, is_multi_sheet=False):
 		"""
 		Infers the target DocType with a weighted score over header fields,
 		primary-key naming, sheet name and filename word overlap.
+
+		`is_multi_sheet` must be True when this row's file has more than one
+		sheet. In that case every sheet in the workbook shares the same
+		filename, so filename word overlap is not sheet-specific and is
+		skipped — otherwise it can outweigh the correct header/sheet-name
+		match for every sheet except the one the file happens to be named
+		after.
 
 		Returns (doctype, note) where note explains the confidence to the user.
 		"""
@@ -430,6 +548,14 @@ class SmartImportEngine:
 				matches = len(header_set & entry["keys"])
 				if normalize_key(dt) + " name" in header_set:
 					matches += 3
+				# A column literally named after the DocType itself (e.g. a
+				# "Designation" header for the Designation master) is strong,
+				# doctype-specific evidence — unlike the field/label intersection
+				# above, which also matches every other DocType that merely has a
+				# Link field pointing at this one (Employee.designation, etc.) and
+				# so can't tell them apart on a sparse, single-column sheet.
+				if normalize_key(dt) in header_set:
+					matches += 5
 				if entry["title_field"] and normalize_key(entry["title_field"]) in header_set:
 					matches += 1
 				if matches >= 2:
@@ -442,18 +568,20 @@ class SmartImportEngine:
 				if normalize_key(dt) == clean_sheet:
 					scores[dt] += 40
 
-		# Step 3: filename matching & word overlap
-		base_name = os.path.basename(str(filename or "")).rsplit(".", 1)[0]
-		clean_base = normalize_key(base_name)
-		base_words = set(clean_base.split())
-		for dt in index:
-			dt_clean = normalize_key(dt)
-			if dt_clean == clean_base:
-				scores[dt] += 50
-			else:
-				common = set(dt_clean.split()) & base_words
-				if common:
-					scores[dt] += len(common) * 5
+		# Step 3: filename matching & word overlap. Skipped for a multi-sheet
+		# workbook, since every sheet in it shares this same filename.
+		if not is_multi_sheet:
+			base_name = os.path.basename(str(filename or "")).rsplit(".", 1)[0]
+			clean_base = normalize_key(base_name)
+			base_words = set(clean_base.split())
+			for dt in index:
+				dt_clean = normalize_key(dt)
+				if dt_clean == clean_base:
+					scores[dt] += 50
+				else:
+					common = set(dt_clean.split()) & base_words
+					if common:
+						scores[dt] += len(common) * 5
 
 		if not scores:
 			return None, ""
@@ -560,46 +688,53 @@ class SmartImportEngine:
 		sorted_deps = sorted(self.doc.dependencies, key=lambda d: cint(d.execution_tier))
 		row_log = []
 
-		for dep in sorted_deps:
-			dep.status = "Processing"
-			self.doc.save(ignore_permissions=True)
-			frappe.db.commit()
+		try:
+			for dep in sorted_deps:
+				self._raise_if_cancelled()
+				dep.status = "Processing"
+				self.doc.save(ignore_permissions=True)
+				frappe.db.commit()
 
-			target_dt = dep.doctype_name
-			self.publish_progress(_("Tier {0}: importing {1}...").format(dep.execution_tier, target_dt))
+				target_dt = dep.doctype_name
+				self.publish_progress(_("Tier {0}: importing {1}...").format(dep.execution_tier, target_dt))
 
-			matching_files = [f for f in self.doc.files if f.doctype_name == target_dt]
-			for file_row in matching_files:
-				file_path, error = resolve_file_path(file_row.file)
-				if error:
-					file_row.status = "Failed"
-					file_row.error_log = error
-					row_log.append({"row": 0, "doctype": target_dt, "type": "Failed", "reason": error})
-					continue
+				matching_files = [f for f in self.doc.files if f.doctype_name == target_dt]
+				for file_row in matching_files:
+					file_path, error = resolve_file_path(file_row.file)
+					if error:
+						file_row.status = "Failed"
+						file_row.error_log = error
+						row_log.append({"row": 0, "doctype": target_dt, "type": "Failed", "reason": error})
+						continue
 
-				file_row.status = "Importing"
-				# Counters are advanced chunk-by-chunk inside _update_progress_counts,
-				# so the totals returned here are used for reporting only.
-				count, failed, skipped, errors = self._stream_and_batch_insert(
-					file_path=file_path,
-					sheet_name=file_row.sheet_name,
-					target_doctype=target_dt,
-					self_ref_field=dep.self_reference_field if dep.has_inner_dependency else None,
-					dep_row=dep,
-				)
-				row_log.extend(errors)
+					file_row.status = "Importing"
+					# Counters are advanced chunk-by-chunk inside _update_progress_counts,
+					# so the totals returned here are used for reporting only.
+					count, failed, skipped, errors = self._stream_and_batch_insert(
+						file_path=file_path,
+						sheet_name=file_row.sheet_name,
+						target_doctype=target_dt,
+						self_ref_field=dep.self_reference_field if dep.has_inner_dependency else None,
+						dep_row=dep,
+					)
+					row_log.extend(errors)
 
-				file_row.status = "Failed" if (failed and not count) else "Completed"
-				file_row.error_log = _("{0} imported, {1} failed, {2} skipped.").format(count, failed, skipped)
+					file_row.status = "Failed" if (failed and not count) else "Completed"
+					file_row.error_log = _("{0} imported, {1} failed, {2} skipped.").format(count, failed, skipped)
 
-				if failed and self.stop_on_error:
-					dep.status = "Failed"
-					self._finalize(start_time, row_log, "Failed")
-					return False
+					if failed and self.stop_on_error:
+						dep.status = "Failed"
+						self._finalize(start_time, row_log, "Failed")
+						return False
 
-			dep.status = "Completed" if cint(dep.processed_count) else "Pending"
-			self.doc.save(ignore_permissions=True)
-			frappe.db.commit()
+				dep.status = "Completed" if cint(dep.processed_count) else "Pending"
+				self.doc.save(ignore_permissions=True)
+				frappe.db.commit()
+		except ImportCancelled:
+			# Whatever was imported before the cancel lands stays — no rollback,
+			# consistent with how partial progress already works on a stop_on_error abort.
+			self._finalize(start_time, row_log, "Cancelled")
+			return False
 
 		failed_only = [e for e in row_log if e.get("type") != "Skipped"]
 		if failed_only:
@@ -609,6 +744,10 @@ class SmartImportEngine:
 
 		self._finalize(start_time, row_log, status)
 		return True
+
+	def _raise_if_cancelled(self):
+		if frappe.db.get_value("Smart Data Import", self.doc.name, "status") == "Cancelled":
+			raise ImportCancelled
 
 	def _finalize(self, start_time, row_log, status):
 		self._flush_manifest()
@@ -702,6 +841,7 @@ class SmartImportEngine:
 				gc.collect()
 				if f and self.stop_on_error:
 					return inserted_count, failed_count, skipped_count, row_log
+				self._raise_if_cancelled()
 
 		if batch_records:
 			c, f, s, errs = self._flush_batch_to_db(target_doctype, batch_records, meta, title_field)
@@ -710,6 +850,7 @@ class SmartImportEngine:
 			skipped_count += s
 			row_log.extend(errs)
 			self._update_progress_counts(dep_row, c, f, s)
+			self._raise_if_cancelled()
 
 		if second_pass_updates:
 			self.publish_progress(_("Linking hierarchy parents for {0}...").format(target_doctype))
@@ -793,6 +934,11 @@ class SmartImportEngine:
 		"""
 		Resolves human readable Link titles to primary keys for autonamed DocTypes,
 		e.g. Task.project = "Kintech AI Engine" -> "PROJ-0001".
+
+		Results are cached per (link doctype, value) for the life of the import run,
+		since the same Link value (e.g. a Territory or Customer Group) typically
+		repeats across many rows — this turns what would be one query per row into
+		one query per distinct value.
 		"""
 		resolved = dict(row_dict)
 		for f in meta.fields:
@@ -802,7 +948,16 @@ class SmartImportEngine:
 			if not val or not isinstance(val, str):
 				continue
 			link_dt = f.options
+			cache_key = (link_dt, val)
+
+			if cache_key in self._link_resolve_cache:
+				cached = self._link_resolve_cache[cache_key]
+				if cached is not None:
+					resolved[f.fieldname] = cached
+				continue
+
 			if frappe.db.exists(link_dt, val):
+				self._link_resolve_cache[cache_key] = val
 				continue
 
 			link_meta = frappe.get_meta(link_dt)
@@ -812,12 +967,17 @@ class SmartImportEngine:
 			search_fields.append(link_dt.lower().replace(" ", "_") + "_name")
 			search_fields.extend(["title", "subject", "item_name", "full_name"])
 
+			found = None
 			for sf in search_fields:
 				if link_meta.has_field(sf):
 					res = frappe.db.get_value(link_dt, {sf: val}, "name")
 					if res:
-						resolved[f.fieldname] = res
+						found = res
 						break
+
+			self._link_resolve_cache[cache_key] = found
+			if found:
+				resolved[f.fieldname] = found
 		return resolved
 
 	def _find_existing_name(self, target_doctype, meta, row_dict, title_field):
@@ -1405,25 +1565,33 @@ def rewrite_manifest(doc_name, entries):
 # -------------------------------------------------------------------------
 
 
-def build_template_workbook(target_doctype, include_optional=True):
-	"""Builds an .xlsx template: sheet 1 has the headers to fill, sheet 2 documents
-	every column (type, mandatory, link target, allowed options)."""
-	meta = frappe.get_meta(target_doctype)
+def _template_columns(meta):
+	"""Splits a DocType's real, fillable fields into (mandatory, optional)."""
 	mandatory, optional = [], []
-
 	for field in meta.fields:
 		if field.fieldtype in LAYOUT_FIELDTYPES or field.fieldtype == "Table":
 			continue
 		if field.read_only or getattr(field, "is_virtual", 0):
 			continue
 		(mandatory if field.reqd else optional).append(field)
+	return mandatory, optional
 
-	columns = mandatory + (optional if include_optional else [])
 
-	wb = openpyxl.Workbook()
-	ws = wb.active
-	ws.title = target_doctype[:31]
+def _unique_sheet_name(name, used):
+	"""Sanitizes a DocType name into a valid, unique Excel sheet name (<=31 chars,
+	no \\/*?:[] characters)."""
+	base = re.sub(r"[\\/*?:\[\]]", "", name)[:31] or "Sheet"
+	candidate = base
+	suffix_no = 1
+	while candidate in used:
+		suffix = f" ({suffix_no})"
+		candidate = base[: 31 - len(suffix)] + suffix
+		suffix_no += 1
+	return candidate
 
+
+def _write_template_sheet(ws, columns):
+	"""Fills one data-entry sheet with the styled header row for `columns`."""
 	headers = [f.label or f.fieldname for f in columns]
 	ws.append(headers)
 	for idx, field in enumerate(columns, start=1):
@@ -1433,32 +1601,115 @@ def build_template_workbook(target_doctype, include_optional=True):
 		ws.column_dimensions[cell.column_letter].width = max(14, min(38, len(str(cell.value)) + 6))
 	ws.freeze_panes = "A2"
 
+
+def _field_guide_row(field):
+	options = ""
+	if field.fieldtype == "Link":
+		options = _("Existing {0} (name or title)").format(field.options)
+	elif field.fieldtype == "Select" and field.options:
+		options = ", ".join(field.options.split("\n")[:12])
+	return [field.label or field.fieldname, field.fieldname, field.fieldtype, "Yes" if field.reqd else "No", options]
+
+
+def build_template_workbook(target_doctype, include_optional=True):
+	"""Builds a standalone .xlsx template for one DocType: sheet 1 has the headers
+	to fill, sheet 2 documents every column (type, mandatory, link target, options)."""
+	meta = frappe.get_meta(target_doctype)
+	mandatory, optional = _template_columns(meta)
+	columns = mandatory + (optional if include_optional else [])
+
+	wb = openpyxl.Workbook()
+	ws = wb.active
+	ws.title = _unique_sheet_name(target_doctype, set())
+	_write_template_sheet(ws, columns)
+
 	guide = wb.create_sheet("Field Guide")
 	guide.append(["Column Header", "Fieldname", "Type", "Mandatory", "Links To / Options"])
 	for field in columns:
-		options = ""
-		if field.fieldtype == "Link":
-			options = _("Existing {0} (name or title)").format(field.options)
-		elif field.fieldtype == "Select" and field.options:
-			options = ", ".join(field.options.split("\n")[:12])
-		guide.append(
-			[
-				field.label or field.fieldname,
-				field.fieldname,
-				field.fieldtype,
-				"Yes" if field.reqd else "No",
-				options,
-			]
-		)
+		guide.append(_field_guide_row(field))
 	for column_cells in guide.columns:
 		guide.column_dimensions[column_cells[0].column_letter].width = 32
 	for cell in guide[1]:
-		cell.font = openpyxl.styles.Font(bold=True)
+		cell.font = Font(bold=True)
 
 	stream = io.BytesIO()
 	wb.save(stream)
 	wb.close()
 	return stream.getvalue(), len(mandatory), len(columns)
+
+
+def build_combined_template_workbook(target_doctypes, include_optional=True):
+	"""Builds one .xlsx with one data-entry sheet per DocType, plus a single
+	combined Field Guide sheet (with a DocType column) documenting all of them.
+
+	Returns (content_bytes, stats) where stats is
+	[{"doctype", "mandatory_columns", "total_columns"}, ...] in input order.
+	"""
+	wb = openpyxl.Workbook()
+	wb.remove(wb.active)
+
+	used_sheet_names = set()
+	guide_rows = []
+	stats = []
+
+	for target_doctype in target_doctypes:
+		meta = frappe.get_meta(target_doctype)
+		mandatory, optional = _template_columns(meta)
+		columns = mandatory + (optional if include_optional else [])
+
+		ws = wb.create_sheet(_unique_sheet_name(target_doctype, used_sheet_names))
+		used_sheet_names.add(ws.title)
+		_write_template_sheet(ws, columns)
+
+		for field in columns:
+			guide_rows.append([target_doctype, *_field_guide_row(field)])
+
+		stats.append(
+			{"doctype": target_doctype, "mandatory_columns": len(mandatory), "total_columns": len(columns)}
+		)
+
+	guide = wb.create_sheet("Field Guide")
+	guide.append(["DocType", "Column Header", "Fieldname", "Type", "Mandatory", "Links To / Options"])
+	for row in guide_rows:
+		guide.append(row)
+	for column_cells in guide.columns:
+		guide.column_dimensions[column_cells[0].column_letter].width = 28
+	for cell in guide[1]:
+		cell.font = Font(bold=True)
+
+	stream = io.BytesIO()
+	wb.save(stream)
+	wb.close()
+	return stream.getvalue(), stats
+
+
+def build_template_zip(target_doctypes, include_optional=True):
+	"""Builds a .zip containing one standalone .xlsx template per DocType.
+
+	Returns (zip_bytes, stats), same stats shape as build_combined_template_workbook.
+	"""
+	import zipfile
+
+	stats = []
+	used_names = set()
+	buffer = io.BytesIO()
+	with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+		for target_doctype in target_doctypes:
+			content, mandatory_count, total_columns = build_template_workbook(
+				target_doctype, include_optional=include_optional
+			)
+			entry_name = f"Template_{target_doctype.replace(' ', '_')}.xlsx"
+			suffix_no = 1
+			while entry_name in used_names:
+				entry_name = f"Template_{target_doctype.replace(' ', '_')}_{suffix_no}.xlsx"
+				suffix_no += 1
+			used_names.add(entry_name)
+			zf.writestr(entry_name, content)
+			stats.append(
+				{"doctype": target_doctype, "mandatory_columns": mandatory_count, "total_columns": total_columns}
+			)
+
+	return buffer.getvalue(), stats
 
 
 # -------------------------------------------------------------------------
@@ -1470,6 +1721,45 @@ def _get_import_doc(doc_name, ptype="write"):
 	doc = frappe.get_doc("Smart Data Import", doc_name)
 	doc.check_permission(ptype)
 	return doc
+
+
+def required_permissions_for_mode(import_type):
+	"""Which permissions an import mode actually needs. Single source of truth:
+	"Insert and Update" does both per row, so it needs both — deriving this in more
+	than one place is how a write-only role once slipped through and created records.
+	"""
+	permissions = []
+	if import_type in ("Insert New Records", "Insert and Update"):
+		permissions.append("create")
+	if import_type in ("Update Existing Records", "Insert and Update"):
+		permissions.append("write")
+	return permissions
+
+
+def assert_can_import_into(target_doctype, import_type, user=None):
+	user = user or frappe.session.user
+	if target_doctype in SECURITY_CRITICAL_DOCTYPES:
+		frappe.throw(
+			_("You do not have permission to import into {0}.").format(target_doctype),
+			frappe.PermissionError,
+		)
+	for ptype in required_permissions_for_mode(import_type):
+		if not frappe.has_permission(target_doctype, ptype, user=user):
+			frappe.throw(
+				_("You do not have permission to {0} {1} records.").format(ptype, target_doctype),
+				frappe.PermissionError,
+			)
+
+
+def _assert_target_doctypes_allowed(doc):
+	"""System Managers keep using this exactly as before — this only restricts
+	everyone else (e.g. a self-service portal user), since the engine itself writes
+	with ignore_permissions=True regardless of who started the job."""
+	if "System Manager" in frappe.get_roles(frappe.session.user):
+		return
+
+	for target_dt in {dep.doctype_name for dep in doc.dependencies if dep.doctype_name}:
+		assert_can_import_into(target_dt, doc.import_type)
 
 
 @frappe.whitelist()
@@ -1501,6 +1791,8 @@ def start_smart_import(doc_name):
 			)
 		)
 
+	_assert_target_doctypes_allowed(doc)
+
 	frappe.enqueue(
 		"smart_data_import.smart_import_engine.run_async_import",
 		queue="long",
@@ -1512,6 +1804,34 @@ def start_smart_import(doc_name):
 	return {
 		"status": "queued",
 		"message": _("Import queued in the background for {0} rows.").format(doc.total_records),
+	}
+
+
+@frappe.whitelist()
+def cancel_import(doc_name):
+	"""Flags a running import to stop. The background job itself checks this flag
+	between batches (see SmartImportEngine._raise_if_cancelled) and stops cleanly —
+	whatever was already imported at that point is kept, nothing is rolled back."""
+	doc = _get_import_doc(doc_name)
+	if doc.status != "Processing":
+		return {"status": "error", "message": _("Only a running import can be cancelled.")}
+
+	# The background job saves this same row on nearly every batch, so this write
+	# can collide with it — retry rather than surface a transient deadlock to the user.
+	for attempt in range(5):
+		try:
+			frappe.db.set_value("Smart Data Import", doc_name, "status", "Cancelled", update_modified=False)
+			frappe.db.commit()
+			break
+		except frappe.QueryDeadlockError:
+			frappe.db.rollback()
+			if attempt == 4:
+				raise
+			time.sleep(0.2)
+
+	return {
+		"status": "cancelled",
+		"message": _("Cancelling — this will stop after the batch currently in progress."),
 	}
 
 
@@ -1567,6 +1887,7 @@ def get_import_preview(doc_name, sample_size=5):
 			"mapped": {},
 			"unmapped": [],
 			"missing_mandatory": [],
+			"mandatory_fieldnames": [],
 			"headers": [],
 			"samples": [],
 		}
@@ -1599,37 +1920,75 @@ def get_import_preview(doc_name, sample_size=5):
 		entry["mapped"] = mapping["mapped"]
 		entry["unmapped"] = mapping["unmapped"]
 		entry["missing_mandatory"] = missing_mandatory_fields(meta, mapping["mapped"].values(), defaults)
+		entry["mandatory_fieldnames"] = sorted(mandatory_fieldnames(meta))
 		entry["defaults"] = defaults
 		result.append(entry)
 
 	return {"files": result, "import_type": doc.import_type, "status": doc.status}
 
 
-@frappe.whitelist()
-def download_import_template(target_doctype, include_optional=1):
-	"""Generates a ready-to-fill Excel template for a DocType and returns its URL."""
-	if not frappe.db.exists("DocType", target_doctype):
-		frappe.throw(_("DocType {0} does not exist.").format(target_doctype))
-	frappe.has_permission(target_doctype, "create", throw=True)
+def _parse_template_doctypes(target_doctype):
+	"""Accepts either a single DocType name or a JSON-encoded list of names
+	(a Dialog MultiSelectList sends the latter), de-duplicated in order."""
+	if isinstance(target_doctype, list):
+		items = target_doctype
+	else:
+		text = (target_doctype or "").strip()
+		if text.startswith("["):
+			try:
+				items = json.loads(text)
+			except Exception:
+				items = [text]
+		else:
+			items = [text]
 
-	content, mandatory_count, total_columns = build_template_workbook(
-		target_doctype, include_optional=cint(include_optional)
-	)
+	seen = []
+	for item in items:
+		item = (item or "").strip()
+		if item and item not in seen:
+			seen.append(item)
+	if not seen:
+		frappe.throw(_("Select at least one DocType."))
+	return seen
+
+
+@frappe.whitelist()
+def download_import_template(target_doctype, include_optional=1, mode="single"):
+	"""Generates ready-to-fill Excel template(s) and returns the download URL.
+
+	`target_doctype` may be a single DocType name or a JSON-encoded list of names.
+	`mode` only matters when more than one DocType is given: "single" builds one
+	.xlsx with one sheet per DocType; "separate" builds a .zip with one
+	standalone .xlsx per DocType.
+	"""
+	doctypes = _parse_template_doctypes(target_doctype)
+	for dt in doctypes:
+		if not frappe.db.exists("DocType", dt):
+			frappe.throw(_("DocType {0} does not exist.").format(dt))
+		frappe.has_permission(dt, "create", throw=True)
+
+	include_optional = cint(include_optional)
+
+	if len(doctypes) == 1:
+		content, mandatory_count, total_columns = build_template_workbook(
+			doctypes[0], include_optional=include_optional
+		)
+		stats = [{"doctype": doctypes[0], "mandatory_columns": mandatory_count, "total_columns": total_columns}]
+		filename = f"Template_{doctypes[0].replace(' ', '_')}.xlsx"
+	elif mode == "separate":
+		content, stats = build_template_zip(doctypes, include_optional=include_optional)
+		filename = "Import_Templates.zip"
+	else:
+		content, stats = build_combined_template_workbook(doctypes, include_optional=include_optional)
+		filename = "Import_Templates.xlsx"
 
 	from frappe.utils.file_manager import save_file
 
-	file_doc = save_file(
-		f"Template_{target_doctype.replace(' ', '_')}.xlsx",
-		content,
-		None,
-		None,
-		is_private=1,
-	)
+	file_doc = save_file(filename, content, None, None, is_private=1)
 	return {
 		"file_url": file_doc.file_url,
 		"file_name": file_doc.file_name,
-		"mandatory_columns": mandatory_count,
-		"total_columns": total_columns,
+		"stats": stats,
 	}
 
 
@@ -1688,6 +2047,18 @@ def get_error_summary(doc_name, limit=25):
 	}
 
 
+def may_delete_manifest_doctypes(entries):
+	"""Whether the caller could actually delete what a rollback would remove.
+
+	Reported alongside the summary so the UI never offers an Undo action that is
+	certain to be refused — rollback_import enforces the same rule for real.
+	"""
+	return all(
+		frappe.has_permission(target_doctype, "delete")
+		for target_doctype in {e[1] for e in entries if e[0] == "I"}
+	)
+
+
 @frappe.whitelist()
 def get_rollback_summary(doc_name):
 	"""What an "Undo Import" would delete, per DocType — read-only."""
@@ -1707,7 +2078,11 @@ def get_rollback_summary(doc_name):
 			for dt, v in sorted(per_doctype.items())
 		],
 		"status": doc.status,
-		"can_rollback": bool(entries) and doc.status not in ("Processing", "Rolling Back"),
+		"can_rollback": (
+			bool(entries)
+			and doc.status not in ("Processing", "Rolling Back")
+			and may_delete_manifest_doctypes(entries)
+		),
 	}
 
 
@@ -1732,8 +2107,16 @@ def rollback_import(doc_name, force=0):
 			_("This import only updated existing records, which cannot be undone automatically.")
 		)
 
+	# Explicit message: has_permission(throw=True) raises with an empty string here,
+	# which reaches the user as a blank error.
 	for target_doctype in {e[1] for e in entries if e[0] == "I"}:
-		frappe.has_permission(target_doctype, "delete", throw=True)
+		if not frappe.has_permission(target_doctype, "delete"):
+			frappe.throw(
+				_("This import cannot be undone: you do not have permission to delete {0} records.").format(
+					target_doctype
+				),
+				frappe.PermissionError,
+			)
 
 	frappe.enqueue(
 		"smart_data_import.smart_import_engine.run_async_rollback",
@@ -1759,6 +2142,273 @@ def get_importable_doctypes(txt=""):
 	if txt:
 		filters["name"] = ("like", f"%{txt}%")
 	return frappe.get_all("DocType", filters=filters, pluck="name", order_by="name", limit_page_length=50)
+
+
+@frappe.whitelist()
+def portal_importable_doctypes():
+	"""DocTypes the self-service /import page may offer to the current user — only
+	ones they can actually create, and never the security-critical ones regardless
+	of role (see SECURITY_CRITICAL_DOCTYPES)."""
+	candidates = frappe.get_all("DocType", filters={"istable": 0, "issingle": 0}, pluck="name")
+	return sorted(
+		dt
+		for dt in candidates
+		if dt not in SECURITY_CRITICAL_DOCTYPES and frappe.has_permission(dt, "create")
+	)
+
+
+PORTAL_TOGGLE_OPTIONS = (
+	"ignore_link_errors",
+	"ignore_mandatory_errors",
+	"stop_on_error",
+	"ignore_duplicates",
+	"skip_empty_rows",
+	"clean_whitespace",
+)
+
+
+def excel_sheet_names(file_path):
+	"""Sheet names in a workbook, so one file row can be created per sheet.
+
+	read_file_header_and_count only ever reads a single sheet, so a workbook with
+	several sheets needs one row each or the extra sheets are silently ignored.
+	"""
+	workbook = openpyxl.load_workbook(file_path, read_only=True)
+	try:
+		return list(workbook.sheetnames)
+	finally:
+		workbook.close()
+
+
+def _claim_portal_file(file_url):
+	"""Ownership gate for a browser-supplied file_url.
+
+	Uploads arrive standalone (no attached_to_*), so this is the only place
+	ownership is checked — without it any logged-in user could pass the file_url of
+	someone else's private upload and have it read and re-parented onto their import.
+	"""
+	file_doc = frappe.get_doc("File", {"file_url": file_url})
+	if file_doc.owner != frappe.session.user and not frappe.has_permission("File", "read", doc=file_doc):
+		frappe.throw(_("You do not have permission to use this file."), frappe.PermissionError)
+	if file_doc.attached_to_name:
+		frappe.throw(_("This file is already attached to another record."), frappe.PermissionError)
+	return file_doc
+
+
+def _portal_plan(doc):
+	"""Everything the /import_data page needs to show after analysis: what each file
+	was detected as, the execution order, and anything the caller may not import."""
+	verdicts = {}
+
+	def refusal(target_doctype):
+		if target_doctype not in verdicts:
+			try:
+				assert_can_import_into(target_doctype, doc.import_type)
+				verdicts[target_doctype] = ""
+			except frappe.PermissionError as e:
+				verdicts[target_doctype] = str(e) or _("You may not import into {0}.").format(target_doctype)
+		return verdicts[target_doctype]
+
+	files = []
+	for row in doc.files:
+		files.append(
+			{
+				"row": row.name,
+				"idx": row.idx,
+				"file_name": os.path.basename((row.file or "").split("?")[0]),
+				"sheet_name": row.sheet_name,
+				"doctype_name": row.doctype_name,
+				"total_rows": cint(row.total_rows),
+				"status": row.status,
+				"mapping_summary": row.mapping_summary,
+				"error_log": row.error_log,
+				"refused": refusal(row.doctype_name) if row.doctype_name else "",
+			}
+		)
+
+	plan = [
+		{
+			"tier": cint(dep.execution_tier),
+			"doctype": dep.doctype_name,
+			"depends_on": dep.depends_on_doctypes,
+			"total_count": cint(dep.total_count),
+			"self_reference_field": dep.self_reference_field,
+		}
+		for dep in sorted(doc.dependencies, key=lambda d: cint(d.execution_tier))
+	]
+
+	refusals = sorted({f["refused"] for f in files if f["refused"]})
+	return {
+		"doc_name": doc.name,
+		"status": doc.status,
+		"import_type": doc.import_type,
+		"total_records": cint(doc.total_records),
+		"files": files,
+		"plan": plan,
+		"refusals": refusals,
+		"undetected": [f["idx"] for f in files if not f["doctype_name"]],
+		"can_start": bool(plan) and not refusals,
+	}
+
+
+def _analyzed_plan(doc):
+	SmartImportEngine(doc).analyze_files_and_build_graph()
+	doc.reload()
+	return _portal_plan(doc)
+
+
+@frappe.whitelist()
+def portal_create_import(files, import_type="Insert New Records", options=None):
+	"""Creates and analyzes a multi-file import for /import_data without starting it.
+
+	`files` is a list of uploaded file URLs, or of {file_url, doctype_name} when the
+	user has already chosen the target. DocTypes left blank are auto-detected, and
+	multi-sheet workbooks are expanded into one row per sheet. Starting is a separate
+	call to start_smart_import, which re-checks every detected DocType anyway.
+	"""
+	files = frappe.parse_json(files) if isinstance(files, str) else files
+	if not files:
+		frappe.throw(_("Upload at least one file."))
+	options = frappe.parse_json(options) if isinstance(options, str) else (options or {})
+
+	doc = frappe.new_doc("Smart Data Import")
+	doc.title = _("Import by {0} on {1}").format(frappe.session.user, frappe.utils.now())
+	doc.import_type = import_type
+	doc.auto_detect_doctype = 1
+	# Explicit allowlist, never doc.update(options): the payload comes from the
+	# browser and must not be able to set status, owner or any other field.
+	for fieldname in PORTAL_TOGGLE_OPTIONS:
+		if fieldname in options:
+			doc.set(fieldname, cint(options.get(fieldname)))
+	if options.get("batch_size"):
+		doc.batch_size = cint(options["batch_size"])
+	if options.get("filter_rules_json"):
+		doc.filter_rules_json = options["filter_rules_json"]
+
+	claimed = []
+	for entry in files:
+		entry = {"file_url": entry} if isinstance(entry, str) else entry
+		file_url = entry.get("file_url")
+		chosen = (entry.get("doctype_name") or "").strip()
+		if chosen:
+			assert_can_import_into(chosen, import_type)
+
+		claimed.append(_claim_portal_file(file_url))
+
+		sheets = []
+		file_path, error = resolve_file_path(file_url)
+		if not error and file_path.lower().endswith(EXCEL_EXTENSIONS):
+			try:
+				sheets = excel_sheet_names(file_path)
+			except Exception:
+				sheets = []
+
+		# One row per sheet only when the workbook actually has several; a single
+		# sheet keeps sheet_name blank so the engine picks it on its own.
+		if len(sheets) > 1:
+			for sheet_name in sheets:
+				doc.append("files", {"file": file_url, "doctype_name": chosen, "sheet_name": sheet_name})
+		else:
+			doc.append("files", {"file": file_url, "doctype_name": chosen})
+
+	doc.insert()  # "All" role + if_owner grants this — not a System Manager-only action.
+
+	for file_doc in claimed:
+		file_doc.attached_to_doctype = "Smart Data Import"
+		file_doc.attached_to_name = doc.name
+		file_doc.save(ignore_permissions=True)
+
+	return _analyzed_plan(doc)
+
+
+@frappe.whitelist()
+def portal_set_file_doctypes(doc_name, assignments):
+	"""Applies the user's corrections to auto-detection and re-analyzes.
+
+	Re-analysis is safe: detection only fills blank DocTypes, so a choice made here
+	is never overwritten.
+	"""
+	doc = _get_import_doc(doc_name)
+	assignments = frappe.parse_json(assignments) if isinstance(assignments, str) else (assignments or {})
+
+	for row_name, target_doctype in assignments.items():
+		target_doctype = (target_doctype or "").strip()
+		if target_doctype:
+			assert_can_import_into(target_doctype, doc.import_type)
+		for row in doc.files:
+			if row.name == row_name:
+				row.doctype_name = target_doctype
+				break
+
+	doc.save()
+	return _analyzed_plan(doc)
+
+
+@frappe.whitelist()
+def portal_remove_file(doc_name, row_name):
+	"""Drops one file/sheet row — used to discard sheets that aren't data
+	(cover pages, notes) instead of leaving them reported as undetected."""
+	doc = _get_import_doc(doc_name)
+	doc.files = [row for row in doc.files if row.name != row_name]
+	for position, row in enumerate(doc.files, start=1):
+		row.idx = position
+	doc.save()
+	return _analyzed_plan(doc)
+
+
+@frappe.whitelist()
+def portal_plan(doc_name):
+	"""Current analysis result without re-reading the files."""
+	return _portal_plan(_get_import_doc(doc_name, "read"))
+
+
+@frappe.whitelist()
+def portal_my_imports(limit=8):
+	"""The current user's own recent imports, for the history panel on /import_data."""
+	return frappe.get_all(
+		"Smart Data Import",
+		filters={"owner": frappe.session.user},
+		fields=[
+			"name",
+			"title",
+			"status",
+			"total_records",
+			"imported_records",
+			"failed_records",
+			"modified",
+		],
+		order_by="modified desc",
+		limit_page_length=min(50, max(1, cint(limit) or 8)),
+	)
+
+
+@frappe.whitelist()
+def portal_get_status(doc_name):
+	"""Polling endpoint for the portal page — avoids depending on the realtime/
+	socketio stack being reachable from a plain website page."""
+	doc = _get_import_doc(doc_name, "read")
+	return {
+		"doc_name": doc.name,
+		# A single import can span several DocTypes, so report all of them.
+		"doctypes": sorted({row.doctype_name for row in doc.files if row.doctype_name}),
+		"import_type": doc.import_type,
+		"status": doc.status,
+		"progress": doc.progress_percent,
+		"total": cint(doc.total_records),
+		"imported": cint(doc.imported_records),
+		"failed": cint(doc.failed_records),
+		"skipped": cint(getattr(doc, "skipped_records", 0)),
+		"rolled_back": cint(getattr(doc, "rolled_back_records", 0)),
+		"seconds": doc.execution_time_seconds,
+		"error_file": doc.error_file,
+		# Read the manifest only once the run has settled — during Processing this is
+		# polled every couple of seconds and the manifest can be very large.
+		"can_rollback": bool(
+			doc.rollback_file
+			and doc.status not in ("Processing", "Rolling Back")
+			and may_delete_manifest_doctypes(read_manifest(doc.name))
+		),
+	}
 
 
 def run_async_import(doc_name):
