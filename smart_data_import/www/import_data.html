@@ -1,0 +1,1201 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Import Data{% endblock %}
+
+{# A focused, single-purpose tool page reads better without the site's marketing
+   navbar sitting on top of it. #}
+{% block navbar %}{% endblock %}
+
+{% block head_include %}
+{{ super() }}
+<style>
+	:root {
+		--sdi-bg: #ffffff;
+		--sdi-sunk: #f6f7f9;
+		--sdi-line: #e3e6ea;
+		--sdi-text: #1f272e;
+		--sdi-muted: #6b7683;
+		--sdi-accent: #2b64d9;
+		--sdi-accent-soft: #eaf0fd;
+		--sdi-green: #1f8a54;
+		--sdi-green-soft: #e6f5ec;
+		--sdi-amber: #9a6400;
+		--sdi-amber-soft: #fdf3e2;
+		--sdi-red: #b3251e;
+		--sdi-red-soft: #fdecea;
+		--sdi-radius: 10px;
+	}
+
+	.sdi-wrap { max-width: 860px; margin: 0 auto 80px; padding-top: 36px; color: var(--sdi-text); }
+	.sdi-wrap * { box-sizing: border-box; }
+
+	.sdi-head { margin-bottom: 28px; }
+	.sdi-head h1 { font-size: 28px; font-weight: 700; margin: 0 0 6px; }
+	.sdi-head p { color: var(--sdi-muted); margin: 0; font-size: 14px; }
+
+	/* step indicator */
+	.sdi-steps { display: flex; list-style: none; margin: 0 0 28px; padding: 0; }
+	.sdi-steps li {
+		flex: 1; display: flex; align-items: center; gap: 8px;
+		font-size: 12.5px; font-weight: 600; color: var(--sdi-muted); min-width: 0;
+	}
+	.sdi-steps li:not(:last-child)::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--sdi-line); margin: 0 10px; }
+	.sdi-step-dot {
+		flex: 0 0 22px; height: 22px; border-radius: 50%; background: var(--sdi-sunk); color: var(--sdi-muted);
+		display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+	}
+	.sdi-steps li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.sdi-steps li.is-active { color: var(--sdi-text); }
+	.sdi-steps li.is-active .sdi-step-dot { background: var(--sdi-accent); color: #fff; }
+	.sdi-steps li.is-done .sdi-step-dot { background: var(--sdi-green-soft); color: var(--sdi-green); }
+	@media (max-width: 560px) { .sdi-steps li span:last-child { display: none; } }
+
+	.sdi-card {
+		background: var(--sdi-bg);
+		border: 1px solid var(--sdi-line);
+		border-radius: var(--sdi-radius);
+		padding: 20px 22px;
+		margin-bottom: 16px;
+	}
+	.sdi-card[hidden], [hidden] { display: none !important; }
+
+	.sdi-step-title {
+		display: flex; align-items: center; gap: 10px;
+		font-size: 15px; font-weight: 600; margin: 0 0 4px;
+	}
+	.sdi-num {
+		flex: 0 0 24px; height: 24px; border-radius: 50%;
+		background: var(--sdi-accent-soft); color: var(--sdi-accent);
+		font-size: 12px; font-weight: 700;
+		display: inline-flex; align-items: center; justify-content: center;
+	}
+	.sdi-hint { color: var(--sdi-muted); font-size: 13px; margin: 0 0 14px 34px; }
+	.sdi-body { margin-left: 34px; }
+
+	.sdi-row { display: flex; gap: 12px; flex-wrap: wrap; }
+	.sdi-row > * { flex: 1 1 220px; min-width: 0; }
+
+	label.sdi-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+	.sdi-wrap select, .sdi-wrap input[type="text"], .sdi-wrap input[type="number"], .sdi-wrap textarea {
+		width: 100%; padding: 8px 10px; font-size: 14px;
+		border: 1px solid var(--sdi-line); border-radius: 7px;
+		background: var(--sdi-bg); color: var(--sdi-text);
+	}
+	.sdi-wrap textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+	.sdi-wrap select:focus, .sdi-wrap input:focus, .sdi-wrap textarea:focus {
+		outline: 2px solid var(--sdi-accent-soft); border-color: var(--sdi-accent);
+	}
+
+	.sdi-btn {
+		display: inline-flex; align-items: center; gap: 7px;
+		padding: 9px 16px; font-size: 14px; font-weight: 600;
+		border-radius: 7px; border: 1px solid var(--sdi-line);
+		background: var(--sdi-bg); color: var(--sdi-text); cursor: pointer;
+	}
+	.sdi-btn:hover:not(:disabled) { background: var(--sdi-sunk); }
+	.sdi-btn:disabled { opacity: .55; cursor: not-allowed; }
+	.sdi-btn-primary { background: var(--sdi-accent); border-color: var(--sdi-accent); color: #fff; }
+	.sdi-btn-primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--sdi-accent); }
+	.sdi-btn-danger { background: var(--sdi-red); border-color: var(--sdi-red); color: #fff; }
+	.sdi-btn-danger:hover:not(:disabled) { filter: brightness(1.08); background: var(--sdi-red); }
+	.sdi-btn-link {
+		border: none; background: none; padding: 4px 0;
+		color: var(--sdi-accent); text-decoration: underline; cursor: pointer; font-size: 13px;
+	}
+	.sdi-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
+
+	/* drop zone */
+	.sdi-drop {
+		border: 1.5px dashed var(--sdi-line); border-radius: var(--sdi-radius);
+		padding: 26px; text-align: center; cursor: pointer; background: var(--sdi-sunk);
+	}
+	.sdi-drop:hover, .sdi-drop.is-over { border-color: var(--sdi-accent); background: var(--sdi-accent-soft); }
+	.sdi-drop-main { font-size: 14px; font-weight: 600; }
+	.sdi-drop-sub { font-size: 12px; color: var(--sdi-muted); margin-top: 3px; }
+	.sdi-file {
+		display: flex; align-items: center; justify-content: space-between; gap: 12px;
+		border: 1px solid var(--sdi-line); border-radius: 8px; padding: 10px 12px; background: var(--sdi-sunk);
+	}
+	.sdi-file-name { font-size: 13px; font-weight: 600; word-break: break-all; }
+	.sdi-file-size { font-size: 12px; color: var(--sdi-muted); }
+	.sdi-file-doctype {
+		padding: 6px 8px; font-size: 12.5px; border: 1px solid var(--sdi-line); border-radius: 6px;
+		background: var(--sdi-bg); color: var(--sdi-text); max-width: 170px;
+	}
+	.sdi-sr-only {
+		position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+		overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+	}
+
+	/* mode cards */
+	.sdi-modes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+	.sdi-mode { position: relative; }
+	.sdi-mode input { position: absolute; opacity: 0; pointer-events: none; }
+	.sdi-mode span {
+		display: block; border: 1px solid var(--sdi-line); border-radius: 8px;
+		padding: 11px 13px; cursor: pointer; height: 100%;
+	}
+	.sdi-mode b { display: block; font-size: 13px; margin-bottom: 3px; }
+	.sdi-mode small { color: var(--sdi-muted); font-size: 12px; line-height: 1.35; display: block; }
+	.sdi-mode input:checked + span { border-color: var(--sdi-accent); background: var(--sdi-accent-soft); box-shadow: inset 0 0 0 1px var(--sdi-accent); }
+	.sdi-mode input:focus-visible + span { outline: 2px solid var(--sdi-accent); outline-offset: 2px; }
+
+	.sdi-template-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+	.sdi-chip {
+		display: inline-flex; align-items: center; gap: 4px; background: var(--sdi-accent-soft);
+		color: var(--sdi-accent); border-radius: 999px; padding: 4px 4px 4px 12px; font-size: 12.5px; font-weight: 600;
+	}
+	.sdi-chip button {
+		border: none; background: none; color: inherit; cursor: pointer; font-size: 13px; line-height: 1;
+		width: 22px; height: 22px; border-radius: 50%;
+	}
+	.sdi-chip button:hover { background: rgba(0,0,0,.08); }
+
+	/* advanced */
+	.sdi-adv summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--sdi-accent); }
+	.sdi-adv[open] summary { margin-bottom: 14px; }
+	.sdi-checks { display: grid; gap: 9px; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); }
+	.sdi-check { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; }
+	.sdi-check input { margin: 2px 0 0; flex: 0 0 auto; }
+	.sdi-check small { display: block; color: var(--sdi-muted); font-size: 12px; }
+
+	/* progress */
+	.sdi-bar { height: 9px; border-radius: 99px; background: var(--sdi-sunk); overflow: hidden; }
+	.sdi-bar i { display: block; height: 100%; width: 0; background: var(--sdi-accent); transition: width .35s ease; }
+	.sdi-bar.is-idle i { background: linear-gradient(90deg, var(--sdi-accent) 25%, var(--sdi-accent-soft) 50%, var(--sdi-accent) 75%); background-size: 200% 100%; animation: sdi-slide 1.1s linear infinite; }
+	@keyframes sdi-slide { from { background-position: 200% 0; } to { background-position: 0 0; } }
+
+	.sdi-stats { display: flex; gap: 22px; flex-wrap: wrap; margin: 16px 0 0; }
+	.sdi-stat b { display: block; font-size: 22px; font-weight: 700; line-height: 1.2; }
+	.sdi-stat span { font-size: 12px; color: var(--sdi-muted); }
+
+	.sdi-note { border-radius: 8px; padding: 11px 13px; font-size: 13px; margin-bottom: 12px; }
+	.sdi-note-blue { background: var(--sdi-accent-soft); color: #1c3f86; }
+	.sdi-note-green { background: var(--sdi-green-soft); color: var(--sdi-green); }
+	.sdi-note-amber { background: var(--sdi-amber-soft); color: var(--sdi-amber); }
+	.sdi-note-red { background: var(--sdi-red-soft); color: var(--sdi-red); }
+
+	.sdi-pill {
+		display: inline-block; padding: 2px 9px; border-radius: 99px;
+		font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+	}
+	.sdi-pill-green { background: var(--sdi-green-soft); color: var(--sdi-green); }
+	.sdi-pill-amber { background: var(--sdi-amber-soft); color: var(--sdi-amber); }
+	.sdi-pill-red { background: var(--sdi-red-soft); color: var(--sdi-red); }
+	.sdi-pill-blue { background: var(--sdi-accent-soft); color: var(--sdi-accent); }
+	.sdi-pill-gray { background: var(--sdi-sunk); color: var(--sdi-muted); }
+
+	.sdi-scroll { overflow-x: auto; }
+	table.sdi-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+	table.sdi-table th, table.sdi-table td {
+		border: 1px solid var(--sdi-line); padding: 6px 9px; text-align: left; vertical-align: top;
+	}
+	table.sdi-table th { background: var(--sdi-sunk); font-weight: 600; white-space: nowrap; }
+	table.sdi-table code { font-size: 11.5px; }
+	.sdi-num-cell { text-align: right; white-space: nowrap; }
+	.sdi-ignored { color: var(--sdi-muted); }
+	.sdi-mandatory { color: var(--sdi-red); font-weight: 700; }
+
+	.sdi-prev-file { margin-bottom: 20px; }
+	.sdi-prev-file h4 { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
+	.sdi-sub { font-size: 12px; color: var(--sdi-muted); margin: 10px 0 6px; }
+
+	.sdi-spin {
+		width: 14px; height: 14px; border-radius: 50%; display: inline-block;
+		border: 2px solid rgba(255,255,255,.45); border-top-color: #fff;
+		animation: sdi-spin .7s linear infinite;
+	}
+	@keyframes sdi-spin { to { transform: rotate(360deg); } }
+
+	@media (max-width: 600px) {
+		.sdi-hint, .sdi-body { margin-left: 0; }
+		.sdi-card { padding: 16px; }
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:root:not([data-theme="light"]) {
+			--sdi-bg: #1b1f24;
+			--sdi-sunk: #23282f;
+			--sdi-line: #333a43;
+			--sdi-text: #e8ebee;
+			--sdi-muted: #99a3ae;
+			--sdi-accent: #6c9bf5;
+			--sdi-accent-soft: #24304a;
+			--sdi-green: #63c48d;
+			--sdi-green-soft: #1e3728;
+			--sdi-amber: #dda451;
+			--sdi-amber-soft: #3a2f1a;
+			--sdi-red: #f0837c;
+			--sdi-red-soft: #3d2220;
+		}
+		:root:not([data-theme="light"]) .sdi-note-blue { color: #b8cdf8; }
+		:root:not([data-theme="light"]) .sdi-btn-primary,
+		:root:not([data-theme="light"]) .sdi-btn-danger { color: #12161a; }
+	}
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div class="sdi-wrap">
+	<div class="sdi-head">
+		<h1>Import Data</h1>
+		<p>Upload a spreadsheet and load it straight into the system. You can only import into records you already have permission to create.</p>
+	</div>
+
+	<ol class="sdi-steps" id="sdi-steps" aria-label="Import progress">
+		<li data-step="upload" class="is-active"><span class="sdi-step-dot">1</span><span>Upload</span></li>
+		<li data-step="review"><span class="sdi-step-dot">2</span><span>Review</span></li>
+		<li data-step="import"><span class="sdi-step-dot">3</span><span>Import</span></li>
+		<li data-step="done"><span class="sdi-step-dot">4</span><span>Done</span></li>
+	</ol>
+
+	<div id="sdi-fatal" class="sdi-note sdi-note-red" role="alert" aria-live="assertive" hidden></div>
+
+	<!-- ============ SETUP ============ -->
+	<div id="sdi-setup">
+		<div class="sdi-card">
+			<h3 class="sdi-step-title"><i class="sdi-num">1</i> Need a starting point?</h3>
+			<p class="sdi-hint">Optional — download an empty file with the right column headers. Add more than one record type to get several templates in one download.</p>
+			<div class="sdi-body">
+				<div class="sdi-row">
+					<select id="sdi-doctype" aria-label="Add a record type to the template download">
+						<option value="">Loading…</option>
+					</select>
+				</div>
+				<div id="sdi-template-chips" class="sdi-template-chips" aria-live="polite"></div>
+				<div class="sdi-modes" id="sdi-template-mode" style="margin-top:12px;" hidden>
+					<label class="sdi-mode">
+						<input type="radio" name="sdi-template-mode" value="single" checked>
+						<span><b>Combined</b><small>One workbook, one sheet per record type.</small></span>
+					</label>
+					<label class="sdi-mode">
+						<input type="radio" name="sdi-template-mode" value="separate">
+						<span><b>Separate files</b><small>One standalone file per record type, zipped together.</small></span>
+					</label>
+				</div>
+				<div class="sdi-actions">
+					<button type="button" class="sdi-btn" id="sdi-template-btn" disabled>Download template</button>
+					<label class="sdi-check" style="margin:0;">
+						<input type="checkbox" id="sdi-template-optional" checked>
+						<span>Include optional columns</span>
+					</label>
+				</div>
+			</div>
+		</div>
+
+		<div class="sdi-card">
+			<h3 class="sdi-step-title"><i class="sdi-num">2</i> Upload your files</h3>
+			<p class="sdi-hint">Excel (.xlsx, .xlsm) or .csv — as many as you like. Column headers go in the first row; their order doesn't matter. Each sheet of a multi-sheet workbook is imported separately. Once a file is added, you can optionally pick its record type instead of waiting for it to be auto-detected.</p>
+			<div class="sdi-body">
+				<div class="sdi-drop" id="sdi-drop" role="button" tabindex="0" aria-label="Choose or drop files">
+					<div class="sdi-drop-main">Drop your files here, or click to choose</div>
+					<div class="sdi-drop-sub">.xlsx, .xlsm or .csv · multiple files allowed</div>
+				</div>
+				<input type="file" id="sdi-file" accept=".xlsx,.xlsm,.csv" multiple hidden>
+				<div id="sdi-file-list"></div>
+				<div class="sdi-actions" id="sdi-more-actions" hidden>
+					<button type="button" class="sdi-btn-link" id="sdi-add-more">+ Add more files</button>
+					<button type="button" class="sdi-btn-link" id="sdi-file-clear">Remove all</button>
+				</div>
+			</div>
+		</div>
+
+		<div class="sdi-card">
+			<h3 class="sdi-step-title"><i class="sdi-num">3</i> How should the rows be applied?</h3>
+			<p class="sdi-hint">Existing records are matched by ID, then by unique fields, then by title.</p>
+			<div class="sdi-body">
+				<div class="sdi-modes">
+					<label class="sdi-mode">
+						<input type="radio" name="sdi-mode" value="Insert New Records" checked>
+						<span><b>Insert new</b><small>Create records only. Rows that already exist are reported.</small></span>
+					</label>
+					<label class="sdi-mode">
+						<input type="radio" name="sdi-mode" value="Update Existing Records">
+						<span><b>Update existing</b><small>Only change records that already exist. Nothing new is created.</small></span>
+					</label>
+					<label class="sdi-mode">
+						<input type="radio" name="sdi-mode" value="Insert and Update">
+						<span><b>Insert &amp; update</b><small>Create what's missing, update what's already there.</small></span>
+					</label>
+				</div>
+
+				<details class="sdi-adv" style="margin-top:18px;">
+					<summary>Advanced options</summary>
+					<div class="sdi-checks">
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-ignore_duplicates">
+							<span>Skip rows that already exist<small>Recommended when re-running an import.</small></span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-ignore_link_errors">
+							<span>Ignore missing links<small>Import even when a linked record doesn't exist yet.</small></span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-ignore_mandatory_errors">
+							<span>Ignore missing mandatory fields<small>Create records even when required columns are absent.</small></span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-stop_on_error">
+							<span>Stop on first error<small>Abort instead of logging the row and continuing.</small></span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-skip_empty_rows" checked>
+							<span>Skip blank rows</span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-clean_whitespace" checked>
+							<span>Trim whitespace</span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-auto_detect_doctype" checked>
+							<span>Auto-detect record type<small>Guess from headers, sheet name and file name when not chosen above.</small></span>
+						</label>
+						<label class="sdi-check">
+							<input type="checkbox" id="sdi-opt-expand_multi_sheet_files" checked>
+							<span>Import every sheet<small>A multi-sheet workbook becomes one row per sheet. Turn off to import only the first sheet of each file.</small></span>
+						</label>
+					</div>
+					<div class="sdi-row" style="margin-top:14px;">
+						<div>
+							<label class="sdi-label" for="sdi-opt-batch_size">Rows per batch</label>
+							<input type="number" id="sdi-opt-batch_size" min="500" step="500" value="5000">
+						</div>
+					</div>
+					<div style="margin-top:14px;">
+						<label class="sdi-label" for="sdi-opt-mapping">Column mapping &amp; defaults (JSON, optional)</label>
+						<textarea id="sdi-opt-mapping" rows="4" spellcheck="false" placeholder='{"Customer": {"column_map": {"Cust Name": "customer_name"}, "defaults": {"customer_type": "Company"}}}'></textarea>
+						<div class="sdi-file-size" style="margin-top:5px;">Only needed for columns that aren't recognised automatically. Run a Dry Run first to see which ones those are.</div>
+					</div>
+				</details>
+
+				<div class="sdi-actions">
+					<button type="button" class="sdi-btn" id="sdi-check-btn">Dry Run</button>
+					<button type="button" class="sdi-btn sdi-btn-primary" id="sdi-start-btn">Start import</button>
+				</div>
+				<div class="sdi-file-size" style="margin-top:6px;">Dry Run reads and validates your files — detects record types, checks the column mapping, works out import order — without writing anything. Nothing is saved until you confirm on the next screen.</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- ============ DETECTION / PLAN ============ -->
+	<div class="sdi-card" id="sdi-detect" hidden>
+		<h3 class="sdi-step-title">What we found in your files</h3>
+		<p class="sdi-hint">Each file (and each sheet) was matched to a record type automatically. Change anything that looks wrong — nothing has been imported yet.</p>
+		<div class="sdi-body">
+			<div id="sdi-detect-note" aria-live="polite"></div>
+			<div class="sdi-scroll">
+				<table class="sdi-table" id="sdi-detect-table">
+					<thead>
+						<tr>
+							<th>File</th>
+							<th>Sheet</th>
+							<th>Import as</th>
+							<th class="sdi-num-cell">Rows</th>
+							<th>Columns</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody id="sdi-detect-rows"></tbody>
+				</table>
+			</div>
+
+			<div id="sdi-plan"></div>
+
+			<div class="sdi-actions">
+				<button type="button" class="sdi-btn" id="sdi-preview-btn">See column mapping</button>
+				<button type="button" class="sdi-btn sdi-btn-primary" id="sdi-go-btn">Start import</button>
+				<button type="button" class="sdi-btn" id="sdi-detect-back">Start over</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- ============ PREVIEW ============ -->
+	<div class="sdi-card" id="sdi-preview" hidden>
+		<h3 class="sdi-step-title">Check before importing</h3>
+		<p class="sdi-hint">This is exactly how your columns will be read. Nothing has been saved yet.</p>
+		<div class="sdi-body" id="sdi-preview-body"></div>
+		<div class="sdi-actions">
+			<button type="button" class="sdi-btn" id="sdi-apply-mapping-btn" hidden>Apply mapping &amp; re-check</button>
+			<button type="button" class="sdi-btn sdi-btn-primary" id="sdi-confirm-btn">Looks right — start import</button>
+			<button type="button" class="sdi-btn" id="sdi-back-btn">Back</button>
+		</div>
+	</div>
+
+	<!-- ============ PROGRESS ============ -->
+	<div class="sdi-card" id="sdi-progress" hidden>
+		<h3 class="sdi-step-title" id="sdi-progress-title" aria-live="polite">Importing…</h3>
+		<p class="sdi-hint" id="sdi-progress-sub">You can leave this page — the import keeps running.</p>
+		<div class="sdi-body">
+			<div class="sdi-bar" id="sdi-bar"><i></i></div>
+			<div class="sdi-stats">
+				<div class="sdi-stat"><b id="sdi-p-imported">0</b><span>imported</span></div>
+				<div class="sdi-stat"><b id="sdi-p-failed">0</b><span>failed</span></div>
+				<div class="sdi-stat"><b id="sdi-p-skipped">0</b><span>skipped</span></div>
+				<div class="sdi-stat"><b id="sdi-p-total">0</b><span>rows in file</span></div>
+			</div>
+			<div class="sdi-actions">
+				<button type="button" class="sdi-btn sdi-btn-danger" id="sdi-cancel-btn">Stop import</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- ============ RESULT ============ -->
+	<div class="sdi-card" id="sdi-result" hidden>
+		<h3 class="sdi-step-title" id="sdi-result-title">Finished</h3>
+		<div class="sdi-body">
+			<div id="sdi-result-note" class="sdi-note" aria-live="polite"></div>
+			<div class="sdi-stats">
+				<div class="sdi-stat"><b id="sdi-r-imported">0</b><span>imported</span></div>
+				<div class="sdi-stat"><b id="sdi-r-failed">0</b><span>failed</span></div>
+				<div class="sdi-stat"><b id="sdi-r-skipped">0</b><span>skipped</span></div>
+			</div>
+			<div id="sdi-errors" style="margin-top:20px;"></div>
+			<div class="sdi-actions">
+				<a class="sdi-btn" id="sdi-log-btn" hidden>Download full log</a>
+				<button type="button" class="sdi-btn" id="sdi-rerun-btn" hidden>Clear &amp; run again</button>
+				<button type="button" class="sdi-btn sdi-btn-danger" id="sdi-rollback-btn" hidden>Undo this import</button>
+				<button type="button" class="sdi-btn sdi-btn-primary" id="sdi-new-btn">Import another file</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+(function () {
+	"use strict";
+
+	var CSRF = "{{ csrf_token }}";
+	var API = "smart_data_import.smart_import_engine.";
+	var BUSY = ["Processing", "Rolling Back", "Analyzing"];
+	var DONE = ["Completed", "Partial Success", "Failed", "Cancelled", "Rolled Back"];
+
+	var state = { files: [], docName: null, poll: null, plan: null, doctypes: [], edits: {} };
+
+	function $(id) { return document.getElementById(id); }
+	function show(el, on) { el.hidden = !on; }
+	function esc(s) {
+		return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+			return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+		});
+	}
+
+	// Frappe returns user-facing errors in _server_messages as a JSON array of
+	// JSON strings, so unwrap twice to get something worth showing.
+	function serverMessage(payload) {
+		try {
+			var outer = JSON.parse(payload._server_messages);
+			var first = typeof outer[0] === "string" ? JSON.parse(outer[0]) : outer[0];
+			return first.message || first;
+		} catch (e) {
+			return payload.exception || payload.exc_type || "Something went wrong.";
+		}
+	}
+
+	function call(method, args) {
+		return fetch("/api/method/" + method, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": CSRF },
+			body: JSON.stringify(args || {})
+		}).then(function (res) {
+			return res.json().catch(function () { return {}; }).then(function (payload) {
+				if (!res.ok) throw new Error(serverMessage(payload));
+				return payload.message;
+			});
+		});
+	}
+
+	function fatal(err) {
+		var box = $("sdi-fatal");
+		box.textContent = (err && err.message) || String(err);
+		show(box, true);
+		box.scrollIntoView({ behavior: "smooth", block: "center" });
+	}
+	function clearFatal() { show($("sdi-fatal"), false); }
+
+	var STEP_ORDER = ["upload", "review", "import", "done"];
+	function setStep(name) {
+		var idx = STEP_ORDER.indexOf(name);
+		var items = $("sdi-steps").children;
+		for (var i = 0; i < items.length; i++) {
+			items[i].classList.remove("is-active", "is-done");
+			if (i < idx) items[i].classList.add("is-done");
+			else if (i === idx) items[i].classList.add("is-active");
+		}
+	}
+
+	function formatBytes(bytes) {
+		if (bytes < 1024) return bytes + " B";
+		if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+		return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+	}
+
+	function busy(btn, on, label) {
+		btn.disabled = on;
+		if (on) {
+			btn.dataset.label = btn.innerHTML;
+			btn.innerHTML = '<span class="sdi-spin"></span> ' + esc(label || "Working…");
+		} else if (btn.dataset.label) {
+			btn.innerHTML = btn.dataset.label;
+		}
+	}
+
+	function pillFor(status) {
+		if (status === "Completed") return "green";
+		if (status === "Partial Success" || status === "Cancelled" || status === "Rolled Back") return "amber";
+		if (status === "Failed") return "red";
+		if (BUSY.indexOf(status) !== -1) return "blue";
+		return "gray";
+	}
+
+	/* ---------------------------------------------------------------- step 1 */
+
+	var doctypeSelect = $("sdi-doctype");
+
+	call(API + "portal_importable_doctypes").then(function (doctypes) {
+		state.doctypes = doctypes || [];
+		doctypeSelect.innerHTML = "";
+		if (!state.doctypes.length) {
+			doctypeSelect.innerHTML = '<option value="">Nothing available to you</option>';
+			$("sdi-start-btn").disabled = true;
+			$("sdi-check-btn").disabled = true;
+			fatal(new Error("You do not have permission to create any importable records. Ask an administrator for access."));
+			return;
+		}
+		doctypeSelect.appendChild(new Option("Choose a record type…", ""));
+		state.doctypes.forEach(function (dt) { doctypeSelect.appendChild(new Option(dt, dt)); });
+	}).catch(fatal);
+
+	var templateDoctypes = [];
+
+	function renderTemplateChips() {
+		$("sdi-template-chips").innerHTML = templateDoctypes.map(function (dt) {
+			return '<span class="sdi-chip">' + esc(dt) +
+				'<button type="button" data-remove-template="' + esc(dt) + '" aria-label="Remove ' + esc(dt) + '">×</button></span>';
+		}).join("");
+		show($("sdi-template-mode"), templateDoctypes.length > 1);
+		$("sdi-template-btn").disabled = !templateDoctypes.length;
+	}
+
+	doctypeSelect.addEventListener("change", function () {
+		var dt = doctypeSelect.value;
+		if (dt && templateDoctypes.indexOf(dt) === -1) templateDoctypes.push(dt);
+		doctypeSelect.value = "";
+		renderTemplateChips();
+	});
+
+	$("sdi-template-chips").addEventListener("click", function (e) {
+		var dt = e.target.getAttribute && e.target.getAttribute("data-remove-template");
+		if (!dt) return;
+		templateDoctypes = templateDoctypes.filter(function (d) { return d !== dt; });
+		renderTemplateChips();
+	});
+
+	$("sdi-template-btn").addEventListener("click", function () {
+		var btn = this;
+		var mode = templateDoctypes.length > 1 &&
+			document.querySelector('input[name="sdi-template-mode"]:checked').value === "separate"
+			? "separate" : "single";
+		busy(btn, true, "Building…");
+		call(API + "download_import_template", {
+			target_doctype: templateDoctypes,
+			include_optional: $("sdi-template-optional").checked ? 1 : 0,
+			mode: mode
+		}).then(function (info) {
+			busy(btn, false);
+			window.location.href = info.file_url;
+		}).catch(function (err) { busy(btn, false); fatal(err); });
+	});
+
+	/* ---------------------------------------------------------------- step 2 */
+
+	var fileInput = $("sdi-file");
+	var drop = $("sdi-drop");
+
+	// Optional: choosing a record type per file up front skips auto-detection for
+	// it entirely. Left blank, the server still guesses it after upload as before.
+	function doctypeOptionsHtml(selected) {
+		var opts = ['<option value="">Auto-detect</option>'];
+		state.doctypes.forEach(function (dt) {
+			opts.push('<option value="' + esc(dt) + '"' + (dt === selected ? " selected" : "") + ">" + esc(dt) + "</option>");
+		});
+		return opts.join("");
+	}
+
+	function renderFiles() {
+		var list = $("sdi-file-list");
+		list.innerHTML = state.files.map(function (f, i) {
+			return '<div class="sdi-file" style="margin-top:8px;"><div>' +
+				'<div class="sdi-file-name">' + esc(f.name) + "</div>" +
+				'<div class="sdi-file-size">' + formatBytes(f.size) + "</div></div>" +
+				'<div style="display:flex;align-items:center;gap:10px;">' +
+				'<label class="sdi-sr-only" for="sdi-file-dt-' + i + '">Import ' + esc(f.name) + ' as</label>' +
+				'<select class="sdi-file-doctype" id="sdi-file-dt-' + i + '" data-file-idx="' + i + '">' +
+				doctypeOptionsHtml(f.__sdiDoctype || "") + "</select>" +
+				'<button type="button" class="sdi-btn-link" data-drop="' + i + '">Remove</button></div></div>';
+		}).join("");
+		show(drop, !state.files.length);
+		show($("sdi-more-actions"), !!state.files.length);
+	}
+
+	$("sdi-file-list").addEventListener("change", function (e) {
+		var idx = e.target.getAttribute && e.target.getAttribute("data-file-idx");
+		if (idx === null || idx === undefined) return;
+		state.files[parseInt(idx, 10)].__sdiDoctype = e.target.value;
+	});
+
+	// The <input accept> attribute only filters the OS file picker — a drag-and-drop
+	// bypasses it entirely, so an unsupported file would otherwise queue silently and
+	// only fail after a slow upload-and-analyze round trip.
+	var ACCEPTED_EXT = [".xlsx", ".xlsm", ".csv"];
+	function hasAcceptedExtension(name) {
+		var lower = name.toLowerCase();
+		return ACCEPTED_EXT.some(function (ext) { return lower.slice(-ext.length) === ext; });
+	}
+
+	function addFiles(fileList) {
+		var rejected = [];
+		Array.prototype.forEach.call(fileList, function (file) {
+			if (!hasAcceptedExtension(file.name)) { rejected.push(file.name); return; }
+			var dupe = state.files.some(function (f) { return f.name === file.name && f.size === file.size; });
+			if (!dupe) state.files.push(file);
+		});
+		renderFiles();
+		if (rejected.length) {
+			fatal(new Error("Skipped " + rejected.length + " unsupported file(s): " + rejected.join(", ") +
+				". Only .xlsx, .xlsm and .csv are accepted."));
+		}
+	}
+
+	$("sdi-file-list").addEventListener("click", function (e) {
+		var i = e.target.getAttribute && e.target.getAttribute("data-drop");
+		if (i === null || i === undefined) return;
+		state.files.splice(parseInt(i, 10), 1);
+		renderFiles();
+	});
+
+	drop.addEventListener("click", function () { fileInput.click(); });
+	drop.addEventListener("keydown", function (e) {
+		if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+	});
+	$("sdi-add-more").addEventListener("click", function () { fileInput.click(); });
+	fileInput.addEventListener("change", function () { addFiles(fileInput.files); fileInput.value = ""; });
+	$("sdi-file-clear").addEventListener("click", function () { state.files = []; renderFiles(); });
+
+	["dragenter", "dragover"].forEach(function (evt) {
+		drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.add("is-over"); });
+	});
+	["dragleave", "drop"].forEach(function (evt) {
+		drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.remove("is-over"); });
+	});
+	drop.addEventListener("drop", function (e) {
+		if (e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+	});
+
+	/* ---------------------------------------------------------------- step 3 */
+
+	function selectedMode() {
+		return document.querySelector('input[name="sdi-mode"]:checked').value;
+	}
+
+	function collectOptions() {
+		var options = {
+			batch_size: parseInt($("sdi-opt-batch_size").value, 10) || 5000,
+			filter_rules_json: $("sdi-opt-mapping").value.trim()
+		};
+		["ignore_duplicates", "ignore_link_errors", "ignore_mandatory_errors",
+		 "stop_on_error", "skip_empty_rows", "clean_whitespace",
+		 "auto_detect_doctype", "expand_multi_sheet_files"].forEach(function (key) {
+			options[key] = $("sdi-opt-" + key).checked ? 1 : 0;
+		});
+		return options;
+	}
+
+	function uploadFile(file) {
+		var form = new FormData();
+		form.append("file", file, file.name);
+		form.append("is_private", 1);
+		return fetch("/api/method/upload_file", {
+			method: "POST",
+			headers: { "X-Frappe-CSRF-Token": CSRF },
+			body: form
+		}).then(function (res) {
+			return res.json().catch(function () { return {}; }).then(function (payload) {
+				if (!res.ok) throw new Error(serverMessage(payload));
+				return payload.message.file_url;
+			});
+		});
+	}
+
+	// Uploads every file, then lets the server detect what each one is. Nothing is
+	// imported yet — both "Check files" and "Start import" go through here.
+	function createImport(btn, label) {
+		clearFatal();
+		if (!state.files.length) { fatal(new Error("Upload at least one file first.")); return Promise.reject(); }
+
+		busy(btn, true, label);
+		var pendingFiles = state.files;
+		var uploads = pendingFiles.map(function (f) { return uploadFile(f); });
+
+		return Promise.all(uploads).then(function (urls) {
+			var files = urls.map(function (url, i) {
+				var chosen = pendingFiles[i].__sdiDoctype;
+				return chosen ? { file_url: url, doctype_name: chosen } : url;
+			});
+			return call(API + "portal_create_import", {
+				files: files,
+				import_type: selectedMode(),
+				options: collectOptions()
+			});
+		}).then(function (plan) {
+			busy(btn, false);
+			state.docName = plan.doc_name;
+			state.edits = {};
+			return plan;
+		}).catch(function (err) {
+			busy(btn, false);
+			if (err) fatal(err);
+			throw err;
+		});
+	}
+
+	function showDetection(plan) {
+		state.plan = plan;
+		renderDetection(plan);
+		show($("sdi-setup"), false);
+		show($("sdi-preview"), false);
+		show($("sdi-detect"), true);
+		setStep("review");
+		window.scrollTo({ top: 0, behavior: "smooth" });
+	}
+
+	$("sdi-check-btn").addEventListener("click", function () {
+		createImport(this, "Reading files…").then(showDetection).catch(function () {});
+	});
+
+	$("sdi-start-btn").addEventListener("click", function () {
+		// Still stops at detection when something needs a decision, otherwise there is
+		// no chance to correct a wrong guess before records are written.
+		createImport(this, "Reading files…").then(function (plan) {
+			if (plan.can_start && !plan.undetected.length) return beginImport();
+			showDetection(plan);
+		}).catch(function () {});
+	});
+
+	$("sdi-back-btn").addEventListener("click", function () {
+		show($("sdi-preview"), false);
+		show($("sdi-detect"), true);
+	});
+
+	$("sdi-detect-back").addEventListener("click", function () {
+		state.docName = null;
+		show($("sdi-detect"), false);
+		show($("sdi-setup"), true);
+		setStep("upload");
+	});
+
+	$("sdi-preview-btn").addEventListener("click", function () {
+		var btn = this;
+		busy(btn, true, "Reading…");
+		call(API + "get_import_preview", { doc_name: state.docName, sample_size: 5 }).then(function (preview) {
+			busy(btn, false);
+			renderPreview(preview);
+			show($("sdi-detect"), false);
+			show($("sdi-preview"), true);
+		}).catch(function (err) { busy(btn, false); fatal(err); });
+	});
+
+	$("sdi-go-btn").addEventListener("click", function () {
+		if (state.plan && !state.plan.can_start) {
+			fatal(new Error(state.plan.refusals[0] || "Nothing in these files can be imported yet."));
+			return;
+		}
+		beginImport();
+	});
+
+	// Per-row overrides: picking a type re-checks immediately, and once nothing
+	// else needs attention, moves straight into the import — no extra click needed.
+	$("sdi-detect-rows").addEventListener("change", function (e) {
+		var row = e.target.getAttribute && e.target.getAttribute("data-row");
+		if (!row) return;
+		state.edits[row] = e.target.value;
+		var sel = e.target;
+		sel.disabled = true;
+		call(API + "portal_set_file_doctypes", { doc_name: state.docName, assignments: state.edits })
+			.then(function (plan) {
+				state.edits = {};
+				state.plan = plan;
+				if (plan.can_start && !plan.undetected.length) {
+					beginImport();
+				} else {
+					renderDetection(plan);
+				}
+			})
+			.catch(function (err) { sel.disabled = false; fatal(err); });
+	});
+
+	$("sdi-detect-rows").addEventListener("click", function (e) {
+		var row = e.target.getAttribute && e.target.getAttribute("data-remove");
+		if (!row) return;
+		var btn = e.target;
+		btn.disabled = true;
+		call(API + "portal_remove_file", { doc_name: state.docName, row_name: row })
+			.then(showDetection)
+			.catch(function (err) { btn.disabled = false; fatal(err); });
+	});
+
+	function renderDetection(plan) {
+		var note = $("sdi-detect-note");
+		if (plan.refusals.length) {
+			note.className = "sdi-note sdi-note-red";
+			note.textContent = plan.refusals.join(" ");
+		} else if (plan.undetected.length) {
+			note.className = "sdi-note sdi-note-amber";
+			note.textContent = "Couldn't work out what " + plan.undetected.length +
+				" file(s) contain — choose the record type below, or remove them. They'll be skipped otherwise.";
+		} else {
+			note.className = "sdi-note sdi-note-green";
+			note.textContent = plan.total_records + " rows ready across " + plan.plan.length + " record type(s).";
+		}
+
+		var options = state.doctypes;
+		$("sdi-detect-rows").innerHTML = plan.files.map(function (f) {
+			// No blank option once a type is set: clearing it just makes auto-detection
+			// fill it in again on the next pass, so "Remove" is the real way to skip a row.
+			var select = '<select data-row="' + esc(f.row) + '">' +
+				(f.doctype_name ? "" : '<option value="" selected>— choose a type —</option>') +
+				options.map(function (dt) {
+					return '<option value="' + esc(dt) + '"' + (dt === f.doctype_name ? " selected" : "") + ">" + esc(dt) + "</option>";
+				}).join("") +
+				// A detected type the user cannot create still has to be visible, otherwise
+				// the row would silently look like "skip" instead of showing the real problem.
+				(f.doctype_name && options.indexOf(f.doctype_name) === -1
+					? '<option value="' + esc(f.doctype_name) + '" selected>' + esc(f.doctype_name) + " (not permitted)</option>"
+					: "") +
+				"</select>";
+
+			var detail = f.refused
+				? '<span class="sdi-pill sdi-pill-red">not permitted</span>'
+				: (f.error_log ? '<span class="sdi-ignored">' + esc(f.error_log) + "</span>"
+					: esc(f.mapping_summary || ""));
+
+			return "<tr><td>" + esc(f.file_name) + "</td>" +
+				"<td>" + esc(f.sheet_name || "—") + "</td>" +
+				"<td>" + select + "</td>" +
+				'<td class="sdi-num-cell">' + esc(f.total_rows) + "</td>" +
+				"<td>" + detail + "</td>" +
+				'<td><button type="button" class="sdi-btn-link" data-remove="' + esc(f.row) + '">Remove</button></td></tr>';
+		}).join("");
+
+		var planBox = $("sdi-plan");
+		if (plan.plan.length > 1) {
+			planBox.innerHTML = '<div class="sdi-sub">Import order (dependencies first)</div>' +
+				'<div class="sdi-note sdi-note-blue">' +
+				plan.plan.map(function (p) {
+					return "<b>" + esc(p.doctype) + "</b> (" + esc(p.total_count) + ")" +
+						(p.self_reference_field ? " ↻" : "");
+				}).join(" &nbsp;➔&nbsp; ") + "</div>";
+		} else {
+			planBox.innerHTML = "";
+		}
+
+		$("sdi-go-btn").disabled = !plan.can_start;
+		$("sdi-preview-btn").disabled = !plan.plan.length;
+	}
+
+	$("sdi-confirm-btn").addEventListener("click", function () {
+		show($("sdi-preview"), false);
+		if (state.plan && !state.plan.can_start) {
+			fatal(new Error(state.plan.refusals[0] || "Nothing in these files can be imported yet."));
+			show($("sdi-detect"), true);
+			return;
+		}
+		beginImport();
+	});
+
+	/* --------------------------------------------------------------- preview */
+
+	function renderPreview(preview) {
+		var html = "";
+		var mapSelectIdx = 0;
+		var hasUnmapped = false;
+
+		(preview.files || []).forEach(function (f) {
+			html += '<div class="sdi-prev-file">';
+			html += "<h4>" + esc(f.file || "") + (f.sheet ? ' <span class="sdi-ignored">(' + esc(f.sheet) + ")</span>" : "") + "</h4>";
+
+			if (f.error) {
+				html += '<div class="sdi-note sdi-note-red">' + esc(f.error) + "</div></div>";
+				return;
+			}
+
+			html += '<div class="sdi-note sdi-note-blue"><b>' + esc(f.doctype) + "</b> · " +
+				esc(f.total_rows) + " data rows · mode <b>" + esc(preview.import_type || "") + "</b></div>";
+
+			if ((f.missing_mandatory || []).length) {
+				html += '<div class="sdi-note sdi-note-amber">Required columns missing: <b>' +
+					f.missing_mandatory.map(esc).join(", ") +
+					"</b>. Add them to the file, set them under Defaults, or tick “Ignore missing mandatory fields”.</div>";
+			}
+
+			var mapped = f.mapped || {};
+			var mandatorySet = {};
+			(f.mandatory_fieldnames || []).forEach(function (fn) { mandatorySet[fn] = true; });
+			var anyMandatoryMapped = false;
+
+			html += '<div class="sdi-sub">Column mapping</div><div class="sdi-scroll"><table class="sdi-table">' +
+				"<thead><tr><th>Column in your file</th><th>Imported into</th></tr></thead><tbody>";
+			Object.keys(mapped).forEach(function (header) {
+				var fieldname = mapped[header];
+				var isMandatory = !!mandatorySet[fieldname];
+				if (isMandatory) anyMandatoryMapped = true;
+				html += "<tr><td>" + esc(header) + '</td><td><code' + (isMandatory ? ' class="sdi-mandatory"' : "") +
+					">" + esc(fieldname) + (isMandatory ? " *" : "") + "</code></td></tr>";
+			});
+			html += "</tbody></table></div>";
+			if (anyMandatoryMapped) {
+				html += '<div class="sdi-file-size" style="margin-top:4px;"><span class="sdi-mandatory">*</span> Mandatory field on ' + esc(f.doctype) + ".</div>";
+			}
+
+			if ((f.unmapped || []).length) {
+				hasUnmapped = true;
+				var fields = f.available_fields || [];
+				var fieldOptions = '<option value="">Ignore this column</option>' + fields.map(function (fl) {
+					return '<option value="' + esc(fl.fieldname) + '">' + esc(fl.label) +
+						(mandatorySet[fl.fieldname] ? " (required)" : "") + "</option>";
+				}).join("");
+
+				html += '<div class="sdi-sub">Unrecognised columns — map each one to a field, or leave it ignored</div>' +
+					'<div class="sdi-scroll"><table class="sdi-table"><thead><tr><th>Column in your file</th><th>Map to field</th></tr></thead><tbody>';
+				f.unmapped.forEach(function (header) {
+					var selId = "sdi-map-" + (mapSelectIdx++);
+					html += "<tr><td>" + esc(header) + '</td><td>' +
+						'<label class="sdi-sr-only" for="' + selId + '">Map ' + esc(header) + ' to a field</label>' +
+						'<select id="' + selId + '" class="sdi-map-select" data-doctype="' + esc(f.doctype) +
+						'" data-header="' + esc(header) + '">' + fieldOptions + "</select></td></tr>";
+				});
+				html += "</tbody></table></div>";
+			}
+
+			if ((f.samples || []).length) {
+				html += '<div class="sdi-sub">First rows as they will be read</div><div class="sdi-scroll"><table class="sdi-table"><thead><tr>';
+				(f.headers || []).forEach(function (h, i) {
+					var targetField = mapped[String(h).trim()];
+					var thClass = targetField && mandatorySet[targetField] ? ' class="sdi-mandatory"'
+						: !targetField ? ' class="sdi-ignored"' : "";
+					html += "<th" + thClass + ">" + esc(h || "col " + (i + 1)) + "</th>";
+				});
+				html += "</tr></thead><tbody>";
+				f.samples.forEach(function (row) {
+					html += "<tr>" + row.map(function (v) { return "<td>" + esc(v) + "</td>"; }).join("") + "</tr>";
+				});
+				html += "</tbody></table></div>";
+			}
+			html += "</div>";
+		});
+
+		$("sdi-preview-body").innerHTML = html;
+		show($("sdi-apply-mapping-btn"), hasUnmapped);
+	}
+
+	$("sdi-apply-mapping-btn").addEventListener("click", function () {
+		var btn = this;
+		var columnMap = {};
+		Array.prototype.forEach.call(document.querySelectorAll(".sdi-map-select"), function (sel) {
+			if (!sel.value) return;
+			var dt = sel.getAttribute("data-doctype");
+			columnMap[dt] = columnMap[dt] || {};
+			columnMap[dt][sel.getAttribute("data-header")] = sel.value;
+		});
+		if (!Object.keys(columnMap).length) {
+			fatal(new Error("Choose a field for at least one column first."));
+			return;
+		}
+		busy(btn, true, "Applying…");
+		call(API + "portal_update_column_map", { doc_name: state.docName, column_map: columnMap })
+			.then(function (plan) {
+				state.plan = plan;
+				return call(API + "get_import_preview", { doc_name: state.docName, sample_size: 5 });
+			})
+			.then(function (preview) {
+				busy(btn, false);
+				renderPreview(preview);
+			})
+			.catch(function (err) { busy(btn, false); fatal(err); });
+	});
+
+	/* -------------------------------------------------------------- progress */
+
+	function beginImport() {
+		clearFatal();
+		show($("sdi-setup"), false);
+		show($("sdi-detect"), false);
+		show($("sdi-preview"), false);
+		show($("sdi-result"), false);
+		show($("sdi-progress"), true);
+		setStep("import");
+		$("sdi-bar").classList.add("is-idle");
+		$("sdi-progress-title").textContent = "Starting…";
+
+		return call(API + "start_smart_import", { doc_name: state.docName }).then(function (res) {
+			if (res && res.status === "error") throw new Error(res.message);
+			trackProgress();
+		}).catch(function (err) {
+			show($("sdi-progress"), false);
+			show($("sdi-detect"), true);
+			setStep("review");
+			fatal(err);
+		});
+	}
+
+	function trackProgress() {
+		if (state.poll) clearTimeout(state.poll);
+
+		call(API + "portal_get_status", { doc_name: state.docName }).then(function (s) {
+			var pct = Math.round(s.progress || 0);
+			var bar = $("sdi-bar");
+			bar.classList.toggle("is-idle", !pct);
+			bar.firstChild.style.width = (pct || 0) + "%";
+
+			$("sdi-progress-title").textContent =
+				s.status === "Rolling Back" ? "Undoing import…" : "Importing… " + pct + "%";
+			$("sdi-progress-sub").textContent = s.status === "Rolling Back"
+				? "Deleting the records this import created."
+				: "You can leave this page — the import keeps running.";
+			$("sdi-p-imported").textContent = s.imported;
+			$("sdi-p-failed").textContent = s.failed;
+			$("sdi-p-skipped").textContent = s.skipped;
+			$("sdi-p-total").textContent = s.total;
+			show($("sdi-cancel-btn"), s.status === "Processing");
+
+			if (DONE.indexOf(s.status) !== -1) {
+				show($("sdi-progress"), false);
+				renderResult(s);
+			} else {
+				state.poll = setTimeout(trackProgress, 1500);
+			}
+		}).catch(function (err) {
+			show($("sdi-progress"), false);
+			fatal(err);
+		});
+	}
+
+	$("sdi-cancel-btn").addEventListener("click", function () {
+		var btn = this;
+		if (!window.confirm("Stop this import? Rows already imported are kept — you can undo them afterwards.")) return;
+		busy(btn, true, "Stopping…");
+		call(API + "cancel_import", { doc_name: state.docName }).then(function () {
+			busy(btn, false);
+		}).catch(function (err) { busy(btn, false); fatal(err); });
+	});
+
+	/* ---------------------------------------------------------------- result */
+
+	function renderResult(s) {
+		setStep("done");
+		var note = $("sdi-result-note");
+		var tone = { Completed: "green", "Partial Success": "amber", Cancelled: "amber", "Rolled Back": "amber", Failed: "red" }[s.status] || "blue";
+		note.className = "sdi-note sdi-note-" + tone;
+
+		var text;
+		if (s.status === "Completed") {
+			text = "All " + s.imported + " records imported" + (s.seconds ? " in " + s.seconds + "s" : "") + ".";
+		} else if (s.status === "Partial Success") {
+			text = "Finished with problems — " + s.imported + " imported, " + s.failed + " failed, " + s.skipped + " skipped.";
+		} else if (s.status === "Cancelled") {
+			text = "Stopped early. The " + s.imported + " records imported before stopping were kept.";
+		} else if (s.status === "Rolled Back") {
+			text = "Undone — " + s.rolled_back + " records deleted.";
+		} else {
+			text = "The import failed. Nothing was imported.";
+		}
+
+		$("sdi-result-title").innerHTML = 'Finished <span class="sdi-pill sdi-pill-' + pillFor(s.status) + '">' + esc(s.status) + "</span>";
+		note.textContent = text;
+		$("sdi-r-imported").textContent = s.imported;
+		$("sdi-r-failed").textContent = s.failed;
+		$("sdi-r-skipped").textContent = s.skipped;
+
+		var log = $("sdi-log-btn");
+		if (s.error_file) { log.href = s.error_file; show(log, true); } else { show(log, false); }
+		show($("sdi-rerun-btn"), s.status !== "Rolled Back");
+		show($("sdi-rollback-btn"), !!s.can_rollback);
+		show($("sdi-result"), true);
+
+		$("sdi-errors").innerHTML = "";
+		if (s.failed || s.skipped) loadErrors();
+	}
+
+	function loadErrors() {
+		call(API + "get_error_summary", { doc_name: state.docName, limit: 25 }).then(function (data) {
+			if (!data || !(data.groups || []).length) return;
+			var html = '<div class="sdi-sub">What went wrong, most common first</div><div class="sdi-scroll">' +
+				'<table class="sdi-table"><thead><tr><th class="sdi-num-cell">Rows</th><th>Type</th>' +
+				"<th>Problem</th><th class=\"sdi-num-cell\">e.g. row</th></tr></thead><tbody>";
+			data.groups.forEach(function (g) {
+				var tone = { Failed: "red", Skipped: "amber", Hierarchy: "blue", Rollback: "gray" }[g.type] || "gray";
+				html += '<tr><td class="sdi-num-cell"><b>' + esc(g.count) + "</b></td>" +
+					'<td><span class="sdi-pill sdi-pill-' + tone + '">' + esc(g.type) + "</span></td>" +
+					"<td>" + esc(g.problem) +
+					(g.example_reason ? '<div class="sdi-ignored" style="font-size:11.5px;">' + esc(g.example_reason) + "</div>" : "") +
+					'</td><td class="sdi-num-cell">' + esc(g.example_row || "") + "</td></tr>";
+			});
+			html += "</tbody></table></div>";
+			if (data.truncated) {
+				html += '<div class="sdi-file-size" style="margin-top:8px;">Only the first ' + esc(data.shown_rows) +
+					" problem rows are shown — download the full log for the rest.</div>";
+			}
+			$("sdi-errors").innerHTML = html;
+		}).catch(function () { /* the summary is a nicety; the log download still works */ });
+	}
+
+	$("sdi-rollback-btn").addEventListener("click", function () {
+		var btn = this;
+		call(API + "get_rollback_summary", { doc_name: state.docName }).then(function (info) {
+			if (!info || !info.deletable) {
+				fatal(new Error(info && info.updated
+					? "This import only updated existing records, which cannot be undone automatically."
+					: "There is no record of created documents for this import."));
+				return;
+			}
+			if (!window.confirm("Permanently delete the " + info.deletable + " records this import created? This cannot be undone.")) return;
+			busy(btn, true, "Undoing…");
+			return call(API + "rollback_import", { doc_name: state.docName, force: 0 }).then(function (res) {
+				busy(btn, false);
+				if (res && res.status === "error") throw new Error(res.message);
+				show($("sdi-result"), false);
+				show($("sdi-progress"), true);
+				setStep("import");
+				trackProgress();
+			});
+		}).catch(function (err) { busy(btn, false); fatal(err); });
+	});
+
+	$("sdi-rerun-btn").addEventListener("click", function () {
+		var btn = this;
+		busy(btn, true, "Clearing…");
+		call(API + "reset_import", { doc_name: state.docName }).then(function () {
+			busy(btn, false);
+			beginImport();
+		}).catch(function (err) { busy(btn, false); fatal(err); });
+	});
+
+	$("sdi-new-btn").addEventListener("click", function () {
+		if (state.poll) clearTimeout(state.poll);
+		state.docName = null;
+		state.plan = null;
+		state.edits = {};
+		state.files = [];
+		fileInput.value = "";
+		renderFiles();
+		clearFatal();
+		show($("sdi-result"), false);
+		show($("sdi-preview"), false);
+		show($("sdi-detect"), false);
+		show($("sdi-setup"), true);
+		setStep("upload");
+		window.scrollTo({ top: 0, behavior: "smooth" });
+	});
+
+})();
+</script>
+{% endblock %}

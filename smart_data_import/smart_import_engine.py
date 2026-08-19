@@ -1611,6 +1611,19 @@ def _field_guide_row(field):
 	return [field.label or field.fieldname, field.fieldname, field.fieldtype, "Yes" if field.reqd else "No", options]
 
 
+def _highlight_mandatory_guide_column(ws, mandatory_col):
+	"""Colors each 'Yes' cell in the Field Guide's Mandatory column using Excel's
+	familiar red-fill / dark-red-text convention, so mandatory fields are visible
+	at a glance without reading every row."""
+	fill = PatternFill("solid", fgColor="FFC7CE")
+	font = Font(color="9C0006", bold=True)
+	for row in range(2, ws.max_row + 1):
+		cell = ws.cell(row=row, column=mandatory_col)
+		if cell.value == "Yes":
+			cell.fill = fill
+			cell.font = font
+
+
 def build_template_workbook(target_doctype, include_optional=True):
 	"""Builds a standalone .xlsx template for one DocType: sheet 1 has the headers
 	to fill, sheet 2 documents every column (type, mandatory, link target, options)."""
@@ -1631,6 +1644,7 @@ def build_template_workbook(target_doctype, include_optional=True):
 		guide.column_dimensions[column_cells[0].column_letter].width = 32
 	for cell in guide[1]:
 		cell.font = Font(bold=True)
+	_highlight_mandatory_guide_column(guide, mandatory_col=4)
 
 	stream = io.BytesIO()
 	wb.save(stream)
@@ -1676,6 +1690,7 @@ def build_combined_template_workbook(target_doctypes, include_optional=True):
 		guide.column_dimensions[column_cells[0].column_letter].width = 28
 	for cell in guide[1]:
 		cell.font = Font(bold=True)
+	_highlight_mandatory_guide_column(guide, mandatory_col=5)
 
 	stream = io.BytesIO()
 	wb.save(stream)
@@ -1922,6 +1937,16 @@ def get_import_preview(doc_name, sample_size=5):
 		entry["missing_mandatory"] = missing_mandatory_fields(meta, mapping["mapped"].values(), defaults)
 		entry["mandatory_fieldnames"] = sorted(mandatory_fieldnames(meta))
 		entry["defaults"] = defaults
+		# Lets a caller offer a real "map this column to that field" picker instead of
+		# requiring hand-written column_map JSON for anything auto-detection missed.
+		entry["available_fields"] = sorted(
+			(
+				{"fieldname": f.fieldname, "label": f.label or f.fieldname}
+				for f in meta.fields
+				if f.fieldtype not in LAYOUT_FIELDTYPES
+			),
+			key=lambda f: f["label"].lower(),
+		)
 		result.append(entry)
 
 	return {"files": result, "import_type": doc.import_type, "status": doc.status}
@@ -2164,6 +2189,8 @@ PORTAL_TOGGLE_OPTIONS = (
 	"ignore_duplicates",
 	"skip_empty_rows",
 	"clean_whitespace",
+	"auto_detect_doctype",
+	"expand_multi_sheet_files",
 )
 
 
@@ -2303,9 +2330,11 @@ def portal_create_import(files, import_type="Insert New Records", options=None):
 			except Exception:
 				sheets = []
 
-		# One row per sheet only when the workbook actually has several; a single
-		# sheet keeps sheet_name blank so the engine picks it on its own.
-		if len(sheets) > 1:
+		# One row per sheet only when the workbook actually has several and the
+		# caller hasn't turned that off; a single sheet keeps sheet_name blank so
+		# the engine picks it on its own.
+		allow_multi_sheet = cint(doc.get("expand_multi_sheet_files", 1))
+		if allow_multi_sheet and len(sheets) > 1:
 			for sheet_name in sheets:
 				doc.append("files", {"file": file_url, "doctype_name": chosen, "sheet_name": sheet_name})
 		else:
@@ -2352,6 +2381,39 @@ def portal_remove_file(doc_name, row_name):
 	doc.files = [row for row in doc.files if row.name != row_name]
 	for position, row in enumerate(doc.files, start=1):
 		row.idx = position
+	doc.save()
+	return _analyzed_plan(doc)
+
+
+@frappe.whitelist()
+def portal_update_column_map(doc_name, column_map):
+	"""Saves manual "this column -> that field" choices made in the mapping UI and
+	re-analyzes. `column_map` is {doctype: {header: fieldname}}, merged into any
+	existing Column Mapping & Defaults JSON so other doctypes' rules survive."""
+	doc = _get_import_doc(doc_name)
+	column_map = frappe.parse_json(column_map) if isinstance(column_map, str) else (column_map or {})
+
+	try:
+		rules = json.loads(doc.filter_rules_json) if doc.filter_rules_json else {}
+		if not isinstance(rules, dict):
+			rules = {}
+	except Exception:
+		rules = {}
+
+	for target_doctype, headers in column_map.items():
+		if not isinstance(headers, dict) or not headers:
+			continue
+		entry = rules.get(target_doctype)
+		if not isinstance(entry, dict):
+			entry = {}
+			rules[target_doctype] = entry
+		col_map = entry.get("column_map")
+		if not isinstance(col_map, dict):
+			col_map = {}
+			entry["column_map"] = col_map
+		col_map.update({k: v for k, v in headers.items() if v})
+
+	doc.filter_rules_json = json.dumps(rules)
 	doc.save()
 	return _analyzed_plan(doc)
 

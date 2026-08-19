@@ -81,7 +81,10 @@ frappe.ui.form.on("Smart Data Import", {
 
 		if (!running) {
 			frm.add_custom_button(__("Preview & Column Mapping"), () => frm.events.preview_mapping(frm));
-			frm.add_custom_button(__("Re-Analyze Files"), () => frm.events.analyze_dependencies(frm));
+			// Same underlying analyze call the self-service /import_data portal calls
+			// "Dry Run" — validates everything (detection, mapping, dependency order)
+			// without writing any records, so the label is kept consistent across both.
+			frm.add_custom_button(__("Dry Run"), () => frm.events.analyze_dependencies(frm));
 			frm.add_custom_button(__("Download Template"), () => frm.events.download_template(frm));
 		}
 	},
@@ -225,7 +228,7 @@ frappe.ui.form.on("Smart Data Import", {
 				data.status === "Rolling Back"
 					? __("Rollback Progress")
 					: data.status === "Analyzing"
-					  ? __("Analyze Progress")
+					  ? __("Dry Run Progress")
 					  : __("Import Progress");
 			frm.dashboard.show_progress(progress_title, data.progress || 0, data.message || __("Working..."));
 
@@ -255,7 +258,7 @@ frappe.ui.form.on("Smart Data Import", {
 		frm.__analyzing = true;
 		// A live progress bar (fed by the "smart_import_progress" realtime event) reads
 		// better here than a blocking freeze overlay, which would just hide it.
-		frm.dashboard.show_progress(__("Analyze Progress"), 0, __("Reading your files..."));
+		frm.dashboard.show_progress(__("Dry Run Progress"), 0, __("Reading your files..."));
 
 		frm.call({
 			method: "analyze_dependencies",
